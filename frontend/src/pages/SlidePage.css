@@ -1,0 +1,534 @@
+/* SlidePage.css — Slide editor page styles */
+
+/* ── Keyframes ────────────────────────────────────────────────────────────── */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Layout ───────────────────────────────────────────────────────────────── */
+.sp-page {
+  min-height: 100vh;
+  background: #f1f5f9;
+  font-family: Inter, system-ui, sans-serif;
+  display: flex;
+  flex-direction: column;
+}
+
+.sp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  background: #fff;
+  border-bottom: 1px solid #e2e8f0;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sp-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0;
+}
+
+/* ── Banners ──────────────────────────────────────────────────────────────── */
+.sp-draft-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #eff6ff;
+  border-bottom: 1px solid #bfdbfe;
+  padding: 8px 24px;
+  font-size: 13px;
+  color: #1d4ed8;
+}
+
+.sp-draft-btn {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid #93c5fd;
+  border-radius: 6px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #1d4ed8;
+}
+
+.sp-autosave-badge {
+  background: #f0fdf4;
+  border-bottom: 1px solid #bbf7d0;
+  padding: 4px 24px;
+  font-size: 12px;
+  color: #15803d;
+}
+
+.sp-error-banner {
+  margin: 12px 24px 0;
+  padding: 10px 16px;
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  border-radius: 0.75rem;
+  color: #dc2626;
+  font-size: 14px;
+}
+
+/* ── Center (idle/loading) ────────────────────────────────────────────────── */
+.sp-center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+
+.sp-spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #e2e8f0;
+  border-top: 4px solid #6366f1;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* ── Workspace ────────────────────────────────────────────────────────────── */
+.sp-workspace {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  height: calc(100vh - 57px);
+}
+
+/* ── Sidebar ──────────────────────────────────────────────────────────────── */
+.sp-sidebar {
+  width: 200px;
+  background: #f8fafc;
+  border-right: 1px solid #e2e8f0;
+  overflow-y: auto;
+  padding: 12px 8px;
+  flex-shrink: 0;
+}
+
+.sp-sidebar-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: #475569;
+  letter-spacing: 0.08em;
+  padding: 0 8px 8px;
+  margin: 0;
+}
+
+.sp-thumb-btn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1.5px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  margin-bottom: 2px;
+  transition: background 0.12s;
+}
+
+.sp-thumb-btn:hover {
+  background: #e2e8f0;
+}
+
+.sp-thumb-btn.active {
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
+
+.sp-thumb-num {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sp-thumb-title {
+  font-size: 12px;
+  color: #334155;
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.sp-thumb-actions {
+  display: flex;
+  gap: 2px;
+  padding: 0 10px 4px;
+  justify-content: flex-end;
+}
+
+.sp-micro-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  color: #64748b;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* ── Main canvas area ─────────────────────────────────────────────────────── */
+.sp-main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sp-canvas {
+  position: relative;
+  width: 100%;
+  max-width: 900px;
+  aspect-ratio: 16 / 9;
+  background: #fff;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  padding: 28px 44px 28px 56px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+.sp-accent-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 10px;
+  height: 100%;
+  background: #2563eb;
+  border-radius: 12px 0 0 12px;
+}
+
+.sp-slide-num {
+  position: absolute;
+  bottom: 12px;
+  right: 18px;
+  font-size: 11px;
+  color: #475569;
+}
+
+.sp-slide-title {
+  font-size: clamp(18px, 2.8vw, 32px);
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 8px;
+  line-height: 1.25;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sp-title-input {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid #6366f1;
+  color: #0f172a;
+  font-size: clamp(18px, 2.8vw, 32px);
+  font-weight: 700;
+  width: 100%;
+  outline: none;
+  font-family: inherit;
+  margin-bottom: 8px;
+}
+
+.sp-edit-pen {
+  font-size: 11px;
+  opacity: 0.3;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
+.sp-divider {
+  height: 3px;
+  background: #2563eb;
+  border-radius: 2px;
+  margin-bottom: 14px;
+  flex-shrink: 0;
+}
+
+/* ── Bullet list ──────────────────────────────────────────────────────────── */
+.sp-bullet-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+
+.sp-bullet-item {
+  font-size: clamp(12px, 1.7vw, 17px);
+  color: #334155;
+  line-height: 1.5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sp-bullet-mark {
+  color: #6366f1;
+  font-weight: 700;
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.sp-bullet-input {
+  background: transparent;
+  border: none;
+  border-bottom: 1.5px solid #6366f1;
+  color: #0f172a;
+  font-size: inherit;
+  font-family: inherit;
+  flex: 1;
+  outline: none;
+}
+
+.sp-del-bullet-btn {
+  background: transparent;
+  border: none;
+  color: #475569;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 2px;
+  opacity: 0.45;
+  flex-shrink: 0;
+}
+
+.sp-add-bullet-btn {
+  margin-top: 8px;
+  background: transparent;
+  border: 1px dashed #334155;
+  color: #64748b;
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 3px 12px;
+  font-size: 12px;
+  align-self: flex-start;
+}
+
+/* ── Notes box ────────────────────────────────────────────────────────────── */
+.sp-notes-box {
+  max-width: 900px;
+  background: #fff;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  padding: 14px 18px;
+}
+
+.sp-notes-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.sp-notes-textarea {
+  width: 100%;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 14px;
+  color: #334155;
+  line-height: 1.6;
+  resize: vertical;
+  min-height: 120px;
+  font-family: inherit;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.sp-idle-text {
+  color: #64748b;
+  text-align: center;
+  line-height: 1.6;
+  font-size: 15px;
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
+.sp-btn {
+  padding: 8px 16px;
+  border-radius: 0.75rem;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+
+.sp-btn:disabled { opacity: 0.55; }
+
+.sp-btn-ghost    { background: transparent; color: #64748b; border: 1.5px solid #e2e8f0; }
+.sp-btn-primary  { background: #2563eb; color: #fff; }
+.sp-btn-secondary{ background: #f1f5f9; color: #475569; border: 1.5px solid #e2e8f0; }
+.sp-btn-success  { background: #16a34a; color: #fff; }
+.sp-btn-danger   { background: #dc2626; color: #fff; }
+
+.sp-select {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1.5px solid #e2e8f0;
+  font-size: 13px;
+  color: #334155;
+  background: #fff;
+}
+
+/* ── Mobile drawer toggle button ─────────────────────────────────────────── */
+.sp-drawer-toggle {
+  display: none;
+  background: #fff;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 8px 12px;
+  font-size: 18px;
+  border-right: 1px solid #e2e8f0;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+/* ── Slide nav row (mobile bottom bar) ───────────────────────────────────── */
+.sp-slide-nav-bar {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: #fff;
+  border-top: 1px solid #e2e8f0;
+  overflow-x: auto;
+  flex-shrink: 0;
+  scrollbar-width: thin;
+}
+
+.sp-slide-nav-pill {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border-radius: 20px;
+  border: 1.5px solid #e2e8f0;
+  background: transparent;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.sp-slide-nav-pill.active {
+  background: #2563eb;
+  border-color: #6366f1;
+  color: #fff;
+}
+
+/* ── Responsive breakpoints ───────────────────────────────────────────────── */
+
+/* Tablet: 769px - 1024px — narrow sidebar */
+@media (max-width: 1024px) {
+  .sp-sidebar {
+    width: 160px;
+  }
+}
+
+/* Mobile: ≤768px — sidebar becomes a bottom nav strip */
+@media (max-width: 768px) {
+  /* Header */
+  .sp-header {
+    padding: 10px 14px;
+    gap: 6px;
+  }
+
+  /* Hide desktop sidebar, show toggle */
+  .sp-sidebar {
+    display: none;
+  }
+
+  .sp-drawer-toggle {
+    display: flex;
+  }
+
+  /* Workspace stacks vertically */
+  .sp-workspace {
+    flex-direction: column;
+    height: auto;
+    overflow: visible;
+  }
+
+  /* Main area: full width, allow scroll */
+  .sp-main {
+    padding: 14px 12px 100px;
+    overflow-y: visible;
+  }
+
+  /* Canvas scales down gracefully */
+  .sp-canvas {
+    padding: 18px 18px 18px 30px;
+    border-radius: 0.75rem;
+  }
+
+  /* Show mobile slide nav bar */
+  .sp-slide-nav-bar {
+    display: flex;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 40;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+
+  /* Notes box full width */
+  .sp-notes-box {
+    max-width: 100%;
+  }
+
+  /* Buttons — smaller on mobile */
+  .sp-btn {
+    padding: 7px 11px;
+    font-size: 12px;
+  }
+}
+
+/* Small mobile: ≤480px */
+@media (max-width: 480px) {
+  .sp-header {
+    padding: 8px 10px;
+    flex-wrap: wrap;
+  }
+
+  /* Hide label text, keep icons */
+  .sp-btn span.label { display: none; }
+
+  .sp-main {
+    padding: 10px 8px 100px;
+  }
+
+  .sp-canvas {
+    padding: 14px 12px 14px 22px;
+  }
+}

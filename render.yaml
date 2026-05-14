@@ -1,0 +1,37 @@
+services:
+  # ── Backend (Docker) ────────────────────────────────────────────────────────
+  - type: web
+    name: rag-backend
+    env: docker
+    repo: YOUR_REPO_URL # Thay bằng link repo của bạn
+    rootDir: pre-ai-edtech/RAG_Teaching_Material/backend
+    plan: free
+    healthCheckPath: /docs
+    disk:
+      name: rag-data
+      mountPath: /app/uploads
+      sizeGB: 1
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: COHERE_API_KEY
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: CHROMA_PERSIST_DIR
+        value: /app/uploads/chroma_db
+
+  # ── Frontend (Static Site) ──────────────────────────────────────────────────
+  - type: web
+    name: rag-frontend
+    env: static
+    repo: YOUR_REPO_URL
+    rootDir: pre-ai-edtech/RAG_Teaching_Material/frontend
+    plan: free
+    publishDir: dist
+    buildCommand: npm install && npm run build
+    envVars:
+      - key: VITE_API_BASE_URL
+        fromService:
+          name: rag-backend
+          type: host
