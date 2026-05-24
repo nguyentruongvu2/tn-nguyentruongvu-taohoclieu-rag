@@ -1,4 +1,4 @@
-"""Slide draft persistence."""
+"""Slide draft persistence — PostgreSQL version."""
 
 from __future__ import annotations
 
@@ -23,18 +23,19 @@ def save_slide_draft(
     with _connect() as conn:
         if user_id:
             conn.execute(
-                "DELETE FROM slide_drafts WHERE project_id = ? AND user_id = ?",
+                "DELETE FROM slide_drafts WHERE project_id = %s AND user_id = %s",
                 (project_id, int(user_id)),
             )
         else:
             conn.execute(
-                "DELETE FROM slide_drafts WHERE project_id = ? AND user_id IS NULL",
+                "DELETE FROM slide_drafts WHERE project_id = %s AND user_id IS NULL",
                 (project_id,),
             )
         cur = conn.execute(
             """
             INSERT INTO slide_drafts(user_id, project_id, title, slides_json, layouts_json, slide_count, saved_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
             """,
             (
                 int(user_id) if user_id else None,
@@ -46,7 +47,9 @@ def save_slide_draft(
                 now,
             ),
         )
-    return {"id": int(cur.lastrowid), "slide_count": len(slides), "saved_at": now}
+        draft_id = int(cur.fetchone()["id"])
+        conn.commit()
+    return {"id": draft_id, "slide_count": len(slides), "saved_at": now}
 
 
 def load_slide_draft(
@@ -57,20 +60,23 @@ def load_slide_draft(
     with _connect() as conn:
         if user_id:
             row = conn.execute(
-                "SELECT * FROM slide_drafts WHERE project_id = ? AND user_id = ? ORDER BY datetime(saved_at) DESC LIMIT 1",
+                "SELECT * FROM slide_drafts WHERE project_id = %s AND user_id = %s ORDER BY saved_at DESC LIMIT 1",
                 (str(project_id), int(user_id)),
             ).fetchone()
         else:
             row = conn.execute(
-                "SELECT * FROM slide_drafts WHERE project_id = ? ORDER BY datetime(saved_at) DESC LIMIT 1",
+                "SELECT * FROM slide_drafts WHERE project_id = %s ORDER BY saved_at DESC LIMIT 1",
                 (str(project_id),),
             ).fetchone()
     if not row:
         return None
     data = dict(row)
+    # JSONB columns may be already parsed by psycopg; handle both cases
+    raw_slides  = data.get("slides_json")
+    raw_layouts = data.get("layouts_json")
     try:
-        data["slides"]  = json.loads(data.get("slides_json")  or "[]")
-        data["layouts"] = json.loads(data.get("layouts_json") or "{}")
+        data["slides"]  = json.loads(raw_slides)  if isinstance(raw_slides,  str) else (raw_slides  or [])
+        data["layouts"] = json.loads(raw_layouts) if isinstance(raw_layouts, str) else (raw_layouts or {})
     except Exception:
         data["slides"]  = []
         data["layouts"] = {}

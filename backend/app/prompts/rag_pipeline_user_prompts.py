@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 
-def build_rag_answer_user_prompt(query: str, context_blocks: list[str]) -> str:
-    return (
+def build_rag_answer_user_prompt(query: str, context_blocks: list[str], chat_history: str = "") -> str:
+    prompt = ""
+    if chat_history:
+        prompt += f"Chat History:\n{chat_history}\n\n"
+    prompt += (
         f"Question: {query}\n\n"
         "Output language: Vietnamese (with proper diacritics).\n\n"
         "Context:\n"
         + "\n\n".join(context_blocks)
     )
+    return prompt
 
 
 def build_rag_summary_user_prompt() -> str:

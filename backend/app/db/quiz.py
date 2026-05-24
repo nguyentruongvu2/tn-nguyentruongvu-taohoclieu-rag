@@ -1,4 +1,4 @@
-"""Quiz attempt persistence."""
+"""Quiz attempt persistence — PostgreSQL version."""
 
 from __future__ import annotations
 
@@ -25,7 +25,8 @@ def save_quiz_attempt(
             INSERT INTO quiz_attempts(
                 user_id, project_id, score, total, percentage,
                 num_questions, variation_seed, answers_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
             """,
             (
                 int(user_id) if user_id else None,
@@ -39,7 +40,8 @@ def save_quiz_attempt(
                 now,
             ),
         )
-        attempt_id = int(cur.lastrowid)
+        attempt_id = int(cur.fetchone()["id"])
+        conn.commit()
     return {"id": attempt_id, "score": score, "total": total, "percentage": pct, "created_at": now}
 
 
@@ -51,22 +53,22 @@ def list_quiz_attempts(
     with _connect() as conn:
         if user_id and project_id:
             rows = conn.execute(
-                "SELECT * FROM quiz_attempts WHERE user_id=? AND project_id=? ORDER BY datetime(created_at) DESC LIMIT ?",
+                "SELECT * FROM quiz_attempts WHERE user_id=%s AND project_id=%s ORDER BY created_at DESC LIMIT %s",
                 (int(user_id), str(project_id), limit),
             ).fetchall()
         elif user_id:
             rows = conn.execute(
-                "SELECT * FROM quiz_attempts WHERE user_id=? ORDER BY datetime(created_at) DESC LIMIT ?",
+                "SELECT * FROM quiz_attempts WHERE user_id=%s ORDER BY created_at DESC LIMIT %s",
                 (int(user_id), limit),
             ).fetchall()
         elif project_id:
             rows = conn.execute(
-                "SELECT * FROM quiz_attempts WHERE project_id=? ORDER BY datetime(created_at) DESC LIMIT ?",
+                "SELECT * FROM quiz_attempts WHERE project_id=%s ORDER BY created_at DESC LIMIT %s",
                 (str(project_id), limit),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM quiz_attempts ORDER BY datetime(created_at) DESC LIMIT ?",
+                "SELECT * FROM quiz_attempts ORDER BY created_at DESC LIMIT %s",
                 (limit,),
             ).fetchall()
     return [dict(r) for r in rows]
@@ -80,12 +82,12 @@ def get_quiz_stats(
     with _connect() as conn:
         if user_id and project_id:
             row = conn.execute(
-                "SELECT COUNT(*) as attempts, AVG(percentage) as avg_pct, MAX(percentage) as best_pct, MAX(created_at) as last_at FROM quiz_attempts WHERE user_id=? AND project_id=?",
+                "SELECT COUNT(*) as attempts, AVG(percentage) as avg_pct, MAX(percentage) as best_pct, MAX(created_at) as last_at FROM quiz_attempts WHERE user_id=%s AND project_id=%s",
                 (int(user_id), str(project_id)),
             ).fetchone()
         elif user_id:
             row = conn.execute(
-                "SELECT COUNT(*) as attempts, AVG(percentage) as avg_pct, MAX(percentage) as best_pct, MAX(created_at) as last_at FROM quiz_attempts WHERE user_id=?",
+                "SELECT COUNT(*) as attempts, AVG(percentage) as avg_pct, MAX(percentage) as best_pct, MAX(created_at) as last_at FROM quiz_attempts WHERE user_id=%s",
                 (int(user_id),),
             ).fetchone()
         else:

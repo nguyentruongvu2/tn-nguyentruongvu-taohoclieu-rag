@@ -84,6 +84,26 @@ function exportToGift(items: import("../services/api").QuizItem[]): string {
 }
 
 /**
+ * Export to Moodle Aiken format (.txt)
+ * Spec: https://docs.moodle.org/en/Aiken_format
+ * Very simple and human-readable format for multiple choice.
+ */
+function exportToAiken(items: import("../services/api").QuizItem[]): string {
+  const lines: string[] = [];
+  items.forEach((item) => {
+    lines.push(item.question);
+    item.options.forEach((opt) => {
+      const letter = opt.match(/^([A-D])[.)]/i)?.[1]?.toUpperCase() ?? "";
+      const text = opt.replace(/^[A-D][.)\s]+/i, "").trim();
+      lines.push(`${letter}) ${text}`);
+    });
+    lines.push(`ANSWER: ${item.correct_answer.toUpperCase()}`);
+    lines.push("");
+  });
+  return lines.join("\n");
+}
+
+/**
  * Export to Kahoot-compatible CSV (.csv)
  * Columns: Question, Answer 1, Answer 2, Answer 3, Answer 4, Time limit, Correct answer
  * Correct answer = 1-indexed position of correct option
@@ -457,11 +477,21 @@ export default function QuizPage() {
                     className="qp-regen-btn"
                     style={{ display: "block", width: "100%", textAlign: "left", marginBottom: 4, background: "#164e63" }}
                     onClick={() => {
-                      downloadTextFile(exportToGift(items), "quiz_moodle.txt");
+                      downloadTextFile(exportToGift(items), "quiz_moodle_gift.txt");
                       setShowExportMenu(false);
                     }}
                   >
                     📚 GIFT (.txt) — Moodle
+                  </button>
+                  <button
+                    className="qp-regen-btn"
+                    style={{ display: "block", width: "100%", textAlign: "left", marginBottom: 4, background: "#1e3a8a" }}
+                    onClick={() => {
+                      downloadTextFile(exportToAiken(items), "quiz_moodle_aiken.txt");
+                      setShowExportMenu(false);
+                    }}
+                  >
+                    📝 Aiken (.txt) — Moodle
                   </button>
                   <button
                     className="qp-regen-btn"

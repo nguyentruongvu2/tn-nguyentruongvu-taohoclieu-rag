@@ -5,7 +5,8 @@ import math
 import re
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 if TYPE_CHECKING:
     from ..rag_pipeline import RAGPipeline
@@ -32,12 +33,13 @@ def embed_document(pipeline: "RAGPipeline", text: str) -> List[float]:
     if not pipeline.gemini_api_key:
         return local_embedding(text)
     try:
-        response = genai.embed_content(
+        client = genai.Client(api_key=pipeline.gemini_api_key)
+        response = client.models.embed_content(
             model=pipeline.gemini_embedding_model,
-            content=text,
-            task_type="retrieval_document",
+            contents=text,
+            config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT")
         )
-        return response["embedding"]
+        return response.embeddings[0].values
     except Exception as exc:
         logger.warning(
             "Gemini embedding failed for model '%s' (document mode). Falling back to local embedding. Error: %s",
@@ -51,12 +53,13 @@ def embed_query(pipeline: "RAGPipeline", text: str) -> List[float]:
     if not pipeline.gemini_api_key:
         return local_embedding(text)
     try:
-        response = genai.embed_content(
+        client = genai.Client(api_key=pipeline.gemini_api_key)
+        response = client.models.embed_content(
             model=pipeline.gemini_embedding_model,
-            content=text,
-            task_type="retrieval_query",
+            contents=text,
+            config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY")
         )
-        return response["embedding"]
+        return response.embeddings[0].values
     except Exception as exc:
         logger.warning(
             "Gemini embedding failed for model '%s' (query mode). Falling back to local embedding. Error: %s",

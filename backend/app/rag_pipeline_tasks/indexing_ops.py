@@ -6,8 +6,6 @@ import os
 import re
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
-import google.generativeai as genai
-
 from .embedding_ops import embed_document, local_embedding, normalize_embedding_batch
 from ..chunking import chunk_markdown
 
@@ -176,13 +174,16 @@ def _refine_noisy_chunk_with_gemini(pipeline: "RAGPipeline", chunk_text: str) ->
 
     prompt = _build_chunk_refinement_prompt(chunk_text)
     try:
-        model = genai.GenerativeModel(_REFINEMENT_MODEL)
-        response = model.generate_content(
-            prompt,
-            generation_config={
-                "temperature": _REFINEMENT_TEMPERATURE,
-                "top_p": _REFINEMENT_TOP_P,
-            },
+        from google import genai
+        from google.genai import types
+        client = genai.Client(api_key=pipeline.gemini_api_key)
+        response = client.models.generate_content(
+            model=_REFINEMENT_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=_REFINEMENT_TEMPERATURE,
+                top_p=_REFINEMENT_TOP_P,
+            ),
         )
         refined = _strip_refinement_wrappers(getattr(response, "text", "") or "")
         if not refined:

@@ -19,7 +19,13 @@ from fastapi.responses import JSONResponse
 from .config import API_TITLE, API_VERSION, API_DESCRIPTION, LOG_LEVEL
 from .auth_db import init_auth_db, log_request, upsert_usage, any_admin_exists, create_user
 from .security import decode_access_token, hash_password
-from .routes import auth, project_rag, quiz, secure_rag, slides
+from .routes import auth, project_rag, quiz, secure_rag, slides, convert
+
+import redis.asyncio as redis
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.redis import RedisBackend
+from fastapi_limiter import FastAPILimiter
+
 
 # Configure logging
 logging.basicConfig(
@@ -82,7 +88,25 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info("Document Processing API starting up...")
-    init_auth_db()
+    
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    redis_client = redis.from_url(redis_url, encoding="utf8", decode_responses=True)
+    app.state.redis = redis_client
+    FastAPICache.init(RedisBackend(redis_client), prefix="rag-cache")
+    try:
+        await FastAPILimiter.init(redis_client)
+        logger.info("Redis cache and rate limiter initialized.")
+    except Exception as e:
+        logger.warning(f"Could not connect to Redis: {e}")
+
+    import time, random, psycopg
+    # Random sleep to stagger worker startup and prevent PostgreSQL deadlocks during init_auth_db
+    time.sleep(random.uniform(0, 2))
+    try:
+        init_auth_db()
+    except psycopg.errors.DeadlockDetected:
+        logger.warning("Deadlock detected during init_auth_db, ignoring since another worker is initializing the schema.")
+
     # Bootstrap default admin for local/dev usage if none exists yet.
     if not any_admin_exists():
         admin_password = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "admin123")
@@ -101,6 +125,10 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     logger.info("Document Processing API shutting down...")
+    try:
+        await FastAPILimiter.close()
+    except Exception:
+        pass
 
 
 # Create FastAPI application
@@ -200,11 +228,15 @@ async def auth_context_middleware(request: Request, call_next):
     return response
 
 # Include authentication and secure routes
-app.include_router(auth.router, prefix="/api/auth")  # JWT auth + admin monitor
-app.include_router(secure_rag.router, prefix="/api") # Secure endpoints (/upload, /documents, /generate, /chat)
-app.include_router(project_rag.router, prefix="/api") # Project-based RAG endpoints
-app.include_router(quiz.router, prefix="/api")        # Quiz generation
-app.include_router(slides.router, prefix="/api")      # Slide generation
+from .security import rate_limiter
+from fastapi import Depends
+
+app.include_router(auth.router, prefix="/api/auth", dependencies=[Depends(rate_limiter)])  # JWT auth + admin monitor
+app.include_router(secure_rag.router, prefix="/api", dependencies=[Depends(rate_limiter)]) # Secure endpoints (/upload, /documents, /generate, /chat)
+app.include_router(project_rag.router, prefix="/api", dependencies=[Depends(rate_limiter)]) # Project-based RAG endpoints
+app.include_router(quiz.router, prefix="/api", dependencies=[Depends(rate_limiter)])        # Quiz generation
+app.include_router(slides.router, prefix="/api", dependencies=[Depends(rate_limiter)])      # Slide generation
+app.include_router(convert.router, prefix="", dependencies=[Depends(rate_limiter)])         # Document conversion endpoints (/documents/convert, etc.)
 
 
 # Add OPTIONS handlers for CORS preflight
@@ -214,6 +246,7 @@ async def options_handler(full_path: str):
     return {}
 
 @app.get("/health")
+@app.get("/documents/health")
 async def health_check():
     return {"status": "ok"}
 

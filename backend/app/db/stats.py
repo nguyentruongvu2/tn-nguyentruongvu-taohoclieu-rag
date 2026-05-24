@@ -1,4 +1,4 @@
-"""Usage statistics, request logs, and admin helper utilities."""
+"""Usage statistics, request logs, and admin helper utilities — PostgreSQL version."""
 
 from __future__ import annotations
 
@@ -14,15 +14,16 @@ def upsert_usage(user_id: int, request_inc: int = 0, llm_calls: int = 0, token_u
         conn.execute(
             """
             INSERT INTO usage_stats(user_id, request_count, llm_calls, token_usage, last_activity)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT(user_id) DO UPDATE SET
-                request_count = usage_stats.request_count + excluded.request_count,
-                llm_calls     = usage_stats.llm_calls     + excluded.llm_calls,
-                token_usage   = usage_stats.token_usage   + excluded.token_usage,
-                last_activity = excluded.last_activity
+                request_count = usage_stats.request_count + EXCLUDED.request_count,
+                llm_calls     = usage_stats.llm_calls     + EXCLUDED.llm_calls,
+                token_usage   = usage_stats.token_usage   + EXCLUDED.token_usage,
+                last_activity = EXCLUDED.last_activity
             """,
             (user_id, request_inc, llm_calls, token_usage, now),
         )
+        conn.commit()
 
 
 def log_request(
@@ -36,9 +37,10 @@ def log_request(
 ) -> None:
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO request_logs(user_id, endpoint, method, status_code, llm_calls, token_usage, ip_address, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO request_logs(user_id, endpoint, method, status_code, llm_calls, token_usage, ip_address, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             (user_id, endpoint, method, status_code, llm_calls, token_usage, ip_address, _utc_now()),
         )
+        conn.commit()
 
 
 def list_usage() -> list[dict[str, Any]]:
@@ -66,8 +68,8 @@ def list_logs(limit: int = 200) -> list[dict[str, Any]]:
             SELECT rl.*, u.username
             FROM request_logs rl
             LEFT JOIN users u ON u.id = rl.user_id
-            ORDER BY datetime(rl.created_at) DESC
-            LIMIT ?
+            ORDER BY rl.created_at DESC
+            LIMIT %s
             """,
             (safe_limit,),
         ).fetchall()

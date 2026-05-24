@@ -50,6 +50,7 @@ def answer_with_gemini_stream(
     pipeline: "RAGPipeline",
     query: str,
     contexts: List[Dict[str, object]],
+    chat_history: str = "",
 ):
     if not pipeline.gemini_api_key:
         fallback = []
@@ -76,6 +77,6 @@ def answer_with_gemini_stream(
         text = str(item.get("text", "")).strip()
         context_blocks.append(f'<document id="{idx}"{source_attr}{title_attr}{page_attr}>\n{text}\n</document>')
 
-    prompt = f"{RAG_ANSWER_SYSTEM_PROMPT}\n\n{build_rag_answer_user_prompt(query, context_blocks)}"
+    prompt = f"{RAG_ANSWER_SYSTEM_PROMPT}\n\n{build_rag_answer_user_prompt(query, context_blocks, chat_history)}"
     for chunk in pipeline._stream_content_with_failover(prompt):
         yield chunk

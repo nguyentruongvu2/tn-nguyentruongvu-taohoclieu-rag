@@ -15,8 +15,6 @@ Existing code that does `from ..auth_db import X` continues to work
 because auth_db.py itself does `from .db import *`.
 """
 
-from .connection import AUTH_DB_PATH  # noqa: F401 — exposed for inspection/testing
-
 from .migrations import init_auth_db  # noqa: F401
 
 from .users import (  # noqa: F401

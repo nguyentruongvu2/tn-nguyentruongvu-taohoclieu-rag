@@ -49,6 +49,7 @@ SECTION_USER_INTENT_HINTS: dict[str, str] = {
     "application": "Phân tích ứng dụng thực tế của kiến thức, liên hệ trực tiếp với các tình huống trong tài liệu",
     "summary": "Tóm tắt các điểm quan trọng nhất, đảm bảo không bỏ sót ý chính từ bất kỳ tài liệu nguồn nào",
     "quiz": "Tạo câu hỏi ôn tập kiểm tra kiến thức tổng hợp từ tất cả các nguồn tài liệu",
+    "dynamic": "Viết nội dung phù hợp nhất với chủ đề '{section_title}', dựa sát vào tài liệu nguồn.",
     "default": "Viết nội dung chi tiết cho mục này, đảm bảo bám sát tài liệu nguồn và có trích dẫn đầy đủ",
 }
 
@@ -123,7 +124,7 @@ SECTION_FORMAT_RULES: dict[str, str] = {
         "CONSTRAINTS:\n"
         "- THEMATIC SYNTHESIS: Do NOT write 'Theo file A...' then 'Theo file B...'. Synthesize by CONCEPT.\n"
         "  Find the common themes across all files. If files conflict, state the general rule then note the nuance/exception.\n"
-        "- MANDATORY: Cite source for every major concept or technical detail (e.g., 📚 Nguồn: [File Name]).\n"
+        "- Centralized Citations: Do NOT manually write inline '📚 Nguồn:' or footnotes in the text; the system automatically appends unified interactive citations at the end of subsections.\n"
         "- Fix any code/formula/syntax errors present in context.\n"
         "- Do NOT mention RAG, chunk, or the system process.\n"
         "PEDAGOGICAL SCAFFOLDING (MUST BE FOLLOWED STRICTLY IN THIS ORDER):\n"
@@ -204,45 +205,44 @@ SECTION_FORMAT_RULES: dict[str, str] = {
         "TASK: Generate exactly 6 review questions (3 MCQ + 3 short-answer) tightly aligned to the lesson's Learning Objectives.\n"
         "CONSTRAINTS:\n"
         "- CRITICAL: Every question MUST map to one of the Learning Objectives stated in the lesson.\n"
-        "  Tag each question with: 🎯 Mục tiêu: [Bloom's level — Nhận biết / Hiểu / Áp dụng / Phân tích / Đánh giá / Sáng tạo]\n"
         "- Coverage: MCQ questions should target lower-order (Nhận biết, Hiểu), short-answer should target higher-order (Áp dụng, Phân tích).\n"
         "- Base ALL questions ONLY on the provided lesson content and context.\n"
         "- Prefer scenario-based framing: 'How to...', 'What happens if...', 'What is the result of...'.\n"
         "- Every MCQ: 4 options (A/B/C/D), exactly one correct answer.\n"
         "- Distractors (wrong options) MUST be plausible — based on common misconceptions or partial understanding.\n"
         "- Every short-answer: a model answer + a teaching hint + a pedagogical insight block.\n"
-        "- Cite source immediately below each explanation (not grouped at end).\n"
         "- No external knowledge, no trick questions, no ambiguous phrasing.\n"
         "- If context insufficient → sentinel NOT_ENOUGH_CONTEXT.\n"
-        "PEDAGOGICAL ANALYSIS REQUIREMENTS:\n"
-        "  [MCQ] After the correct answer explanation, add a 'Phân tích đáp án sai' block that explains\n"
-        "        why each WRONG option (A/B/C/D) is incorrect — targeting the specific misconception it represents.\n"
-        "        Format: **Phân tích đáp án sai:**\n"
-        "          - [Wrong Letter]: [explains the misconception this option targets]\n"
-        "  [Short-answer] After the model answer, add a 'Nhận xét sư phạm' block:\n"
-        "        Format: > 🏫 **Nhận xét sư phạm:** [1–2 sentences on the most common student error\n"
-        "        for this question and what the ideal response must demonstrate to show true understanding]\n"
-        "OUTPUT:\n"
-        "## Câu hỏi trắc nghiệm\n"
-        "**Câu hỏi [1–3]:** [question]\n"
-        "🎯 Mục tiêu: [Bloom's level]\n"
-        "A. / B. / C. / D.\n"
-        "**Đáp án:** [Letter]\n"
-        "**Giải thích:** [why the correct answer is right, referencing lesson content]\n"
-        "**Phân tích đáp án sai:**\n"
-        "- [Wrong Letter A/B/C/D]: [specific misconception this wrong option targets]\n"
-        "- [Wrong Letter A/B/C/D]: [specific misconception this wrong option targets]\n"
-        "- [Wrong Letter A/B/C/D]: [specific misconception this wrong option targets]\n"
-        "📚 Nguồn: [source]\n"
-        "---\n"
-        "## Câu hỏi tự luận\n"
-        "**Câu hỏi [4–6]:** [question]\n"
-        "🎯 Mục tiêu: [Bloom's level]\n"
-        "**Gợi ý đáp án:** [model answer — complete and well-structured]\n"
-        "**Gợi ý hướng dẫn (dành cho giảng viên):** [what a strong answer must include]\n"
-        "> 🏫 **Nhận xét sư phạm:** [most common student error + what true understanding looks like]\n"
-        "📚 Nguồn: [source]\n"
-        "---"
+        "OUTPUT FORMAT: You MUST return pure Markdown text. Do NOT use JSON.\n"
+        "Follow this exact structure for the output:\n\n"
+        "### Phần 1: Câu hỏi Trắc nghiệm\n\n"
+        "**Câu 1: [Nội dung câu hỏi]**\n"
+        "- A. [Tùy chọn A]\n"
+        "- B. [Tùy chọn B]\n"
+        "- C. [Tùy chọn C]\n"
+        "- D. [Tùy chọn D]\n"
+        "\n> **Đáp án:** [A, B, C hoặc D] — **Giải thích:** [Giải thích ngắn gọn lý do đúng/sai]\n\n"
+        "(Lặp lại cho 3 câu MCQ)\n\n"
+        "### Phần 2: Câu hỏi Tự luận\n\n"
+        "**Câu 1: [Nội dung câu hỏi]**\n"
+        "\n> **Đáp án tham khảo:** [Câu trả lời mẫu]\n"
+        "> **Gợi ý làm bài:** [Gợi ý/hướng dẫn phân tích]\n"
+        "> **Mục tiêu đánh giá:** [Nhận biết/Hiểu/Áp dụng...]\n\n"
+        "(Lặp lại cho 3 câu Tự luận)\n"
+
+    ),
+    
+    # ── DYNAMIC FALLBACK ─────────────────────────────────────────────────────
+    "dynamic": (
+        "ROLE: Expert Content Synthesizer.\n"
+        "TASK: Write content for the section titled '{section_title}'.\n"
+        "CONSTRAINTS:\n"
+        "- Analyze the meaning of '{section_title}' to determine the best format (e.g., if it's 'Exercises', generate a list of questions; if it's 'References', generate a list of links/books).\n"
+        "- Present the information clearly using markdown formatting (bold, italics, lists, bullet points) as appropriate for the content type.\n"
+        "- Ensure the tone is pedagogical and aligns with the rest of the lesson.\n"
+        "- Synthesize information from the provided context.\n"
+        "- Do NOT force a Hook, Concept Check, or Glossary unless it naturally fits the title.\n"
+        "OUTPUT: Refined Vietnamese Markdown."
     ),
 }
 
@@ -304,6 +304,13 @@ RETRIEVAL_PROFILES: dict[str, RetrievalProfile] = {
         min_total_chars=1800,
         max_chunks=10,
     ),
+    "dynamic": RetrievalProfile(
+        key="dynamic",
+        mode="top_k_range",
+        top_k_levels=(5, 6, 8, 10),
+        min_total_chars=1800,
+        max_chunks=10,
+    ),
 }
 
 
@@ -340,19 +347,25 @@ def normalize_section_profile_key(section_title: str) -> str:
     if any(key in label for key in ["cau hoi", "on tap", "quiz", "trac nghiem", "bai tap"]):
         return "quiz"
 
-    return "main_content"
+    return "dynamic"
 
 
 def get_retrieval_profile(section_title: str) -> RetrievalProfile:
     key = normalize_section_profile_key(section_title)
-    return RETRIEVAL_PROFILES.get(key, RETRIEVAL_PROFILES["main_content"])
+    return RETRIEVAL_PROFILES.get(key, RETRIEVAL_PROFILES["dynamic"])
 
 
 def get_section_format_rules(section_title: str) -> str:
     key = normalize_section_profile_key(section_title)
-    return SECTION_FORMAT_RULES.get(key, SECTION_FORMAT_RULES["main_content"])
+    rule_template = SECTION_FORMAT_RULES.get(key, SECTION_FORMAT_RULES["dynamic"])
+    if key == "dynamic" and "{section_title}" in rule_template:
+        return rule_template.format(section_title=section_title)
+    return rule_template
 
 
 def get_section_user_intent_hint(section_title: str) -> str:
     key = normalize_section_profile_key(section_title)
-    return SECTION_USER_INTENT_HINTS.get(key, SECTION_USER_INTENT_HINTS["default"])
+    hint_template = SECTION_USER_INTENT_HINTS.get(key, SECTION_USER_INTENT_HINTS["default"])
+    if key == "dynamic" and "{section_title}" in hint_template:
+        return hint_template.format(section_title=section_title)
+    return hint_template

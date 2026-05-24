@@ -131,8 +131,9 @@ export default function Register() {
 
         <div className="mb-2 flex w-full items-center justify-between py-2 text-left">
           <label className="group flex cursor-pointer items-start gap-2.5">
-            <div className="relative mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border border-gray-300 transition-colors group-hover:border-indigo-400 peer-checked:border-indigo-600 peer-checked:bg-indigo-600">
+            <div className="relative mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
               <input type="checkbox" className="peer sr-only" required />
+              <div className="absolute inset-0 rounded border border-gray-300 transition-colors group-hover:border-indigo-400 peer-checked:border-indigo-600 peer-checked:bg-indigo-600"></div>
               <Check
                 size={12}
                 className="absolute text-white opacity-0 transition-opacity peer-checked:opacity-100"

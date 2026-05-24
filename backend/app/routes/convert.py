@@ -724,6 +724,8 @@ def _looks_unrecoverable_ocr_text(text: str) -> bool:
 
 
 @router.post("/convert")
+@router.post("/upload")
+
 async def convert_document(
     file: UploadFile = File(...),
     advanced: bool = Query(False, description="Use advanced header/footer detection"),
@@ -1001,7 +1003,16 @@ def _extract_from_pdf_with_meta(
                 current_page_private_use_chars = 0
 
                 # First: Extract tables and keep normalized row signatures for de-duplication.
-                tables = page.extract_tables() or []
+                # Use tolerant settings for better handling of complex/merged tables
+                custom_table_settings = {
+                    "vertical_strategy": "lines",
+                    "horizontal_strategy": "lines",
+                    "intersection_tolerance": 15,
+                    "join_tolerance": 15
+                }
+                tables = page.extract_tables(table_settings=custom_table_settings) or []
+                if not tables:
+                    tables = page.extract_tables() or []
                 table_row_signatures: set[str] = set()
                 
                 # Convert tables to markdown format

@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 import chromadb
-import google.generativeai as genai
 from chromadb.api.models.Collection import Collection
 
 from .rag_flows.answer_generation import answer_with_gemini as flow_answer_with_gemini
@@ -109,7 +108,6 @@ class RAGPipeline:
         self.default_collection_name = os.getenv("CHROMA_COLLECTION", "rag_markdown_chunks")
 
         if self.gemini_api_key:
-            genai.configure(api_key=self.gemini_api_key)
             self.gemini_llm_model = self._resolve_initial_llm_model()
 
     @staticmethod
@@ -340,8 +338,8 @@ class RAGPipeline:
     def answer_with_gemini(self, query: str, contexts: List[Dict[str, object]]) -> Tuple[str, bool]:
         return flow_answer_with_gemini(self, query, contexts)
 
-    def answer_with_gemini_stream(self, query: str, contexts: List[Dict[str, object]]):
-        return flow_answer_with_gemini_stream(self, query, contexts)
+    def answer_with_gemini_stream(self, query: str, contexts: List[Dict[str, object]], chat_history: str = ""):
+        return flow_answer_with_gemini_stream(self, query, contexts, chat_history)
 
     def generate_with_gemini_from_markdown(
         self,

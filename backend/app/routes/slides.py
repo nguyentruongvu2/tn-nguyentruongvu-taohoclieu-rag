@@ -17,10 +17,13 @@ import asyncio
 import json
 import logging
 import re
+import os
+import uuid
+import shutil
 from typing import List
 from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File
 from pydantic import BaseModel, Field, field_validator
 
 from ..rag_pipeline import rag_pipeline
@@ -80,6 +83,7 @@ class GenerateOutlineResponse(BaseModel):
 class DownloadPptxRequest(BaseModel):
     slides: List[SlideItem]
     title: str = Field(default="Bài giảng")
+    template_path: str | None = Field(default=None)
 
 
 class DownloadPdfRequest(BaseModel):
@@ -159,14 +163,15 @@ SECTION: "{section_title}"
 RULES FOR EACH SLIDE:
 1. ASSERTION TITLE — state the key insight or claim the student should remember.
    ✓ "Caching giảm tải server tới 80% trong traffic cao"  ✗ "Giới thiệu về Caching"
-   ✓ "Gradient Descent tìm nghiệm bằng cách leo ngược dốc" ✗ "Thuật toán tối ưu"
 2. EVIDENCE BULLETS (Quy tắc 6x6) — max 6 bullets, each MUST be ≤ 8 words. 
    Use keywords, facts, numbers, steps. NEVER write full sentences.
 3. SPEAKER NOTES — 2–3 sentences. Add analogy, real-world example, or common misconception.
    NEVER repeat the bullets verbatim.
-4. VISUAL SUGGESTION — describe a specific image, diagram, or chart that would illustrate this
+4. TALKING POINTS — 3-5 bullet points of a presentation script (Kịch bản thuyết trình) for the speaker.
+5. ESTIMATED DURATION — integer (in seconds) for how long the slide should be presented (e.g. 60, 90, 120).
+6. VISUAL SUGGESTION — describe a specific image, diagram, or chart that would illustrate this
    slide best. Be concrete: "Sơ đồ luồng dữ liệu Client→Cache→Server" not just "Sơ đồ".
-5. Language: Vietnamese. Keep technical terms (API, cache, gradient, SQL, etc.) in English.
+7. Language: Vietnamese. Keep technical terms (API, cache, gradient, SQL, etc.) in English.
 
 SECTION CONTENT:
 {body}
@@ -177,6 +182,8 @@ Return ONLY a valid JSON array (no wrapper object):
     "title": "[Assertion — key claim in ≤12 words]",
     "bullet_points": ["[Fact/step ≤10 words]", "..."],
     "speaker_notes": "[2–3 sentences for the presenter]",
+    "talking_points": ["[Script point 1]", "[Script point 2]", "..."],
+    "estimated_duration": 60,
     "visual_prompt": "[Concrete image or diagram suggestion in Vietnamese]"
   }},
   ...
@@ -370,6 +377,28 @@ async def generate_outline(body: GenerateOutlineRequest):
     return GenerateOutlineResponse(slides=slides, total=len(slides))
 
 
+@router.post("/upload-template")
+async def upload_template(file: UploadFile = File(...)):
+    """Upload custom PPTX template for slide generation."""
+    if not file.filename or not file.filename.lower().endswith(".pptx"):
+        raise HTTPException(status_code=400, detail="Chỉ hỗ trợ upload file mẫu định dạng .pptx")
+    
+    upload_dir = os.path.join(os.path.dirname(__file__), '../../uploads/templates')
+    os.makedirs(upload_dir, exist_ok=True)
+    
+    file_id = uuid.uuid4().hex
+    file_path = os.path.join(upload_dir, f"{file_id}.pptx")
+    
+    try:
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as exc:
+        logger.error("Template upload error: %s", exc)
+        raise HTTPException(status_code=500, detail="Không thể lưu file template.")
+        
+    return {"success": True, "template_path": file_path, "filename": file.filename}
+
+
 @router.post("/download-pptx")
 async def download_pptx(body: DownloadPptxRequest):
     """Slide JSON → .pptx bytes."""
@@ -378,7 +407,7 @@ async def download_pptx(body: DownloadPptxRequest):
     if not PPTX_OK:
         raise HTTPException(status_code=503, detail=f"python-pptx chưa sẵn sàng: {PPTX_ERROR}")
     try:
-        pptx_bytes = await asyncio.to_thread(pptx_renderer.generate, body.slides, body.title)
+        pptx_bytes = await asyncio.to_thread(pptx_renderer.generate, body.slides, body.title, body.template_path)
         if not pptx_bytes or len(pptx_bytes) < 100:
             raise ValueError("Render produced empty file")
         return Response(

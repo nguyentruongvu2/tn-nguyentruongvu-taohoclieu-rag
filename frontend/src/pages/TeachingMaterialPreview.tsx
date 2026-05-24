@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
-import ReactMarkdown from "react-markdown";
+import MarkdownViewer from "../components/MarkdownViewer";
 import { ChevronDown, Download, Eye, RefreshCw, Save } from "lucide-react";
 import {
   exportEditorProject,
@@ -358,7 +358,18 @@ export default function TeachingMaterialPreview() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-6 pb-10">
-        {loading && <div className="text-slate-500">Đang tải nội dung...</div>}
+        {loading && (
+          <div className="space-y-4 animate-pulse">
+            <div className="bg-white border rounded-xl p-6">
+              <div className="h-4 bg-slate-200 rounded w-1/4 mb-4"></div>
+              <div className="space-y-3">
+                <div className="h-20 bg-slate-100 rounded w-full"></div>
+                <div className="h-20 bg-slate-100 rounded w-full"></div>
+                <div className="h-20 bg-slate-100 rounded w-full"></div>
+              </div>
+            </div>
+          </div>
+        )}
         {error && (
           <div className="text-sm bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-md">
             {error}
@@ -403,22 +414,7 @@ export default function TeachingMaterialPreview() {
             </section>
 
             <article className="bg-white border rounded-xl p-6 prose markdown-preview max-w-none">
-              <ReactMarkdown
-                components={{
-                  p: ({ children }) => (
-                    <p className="whitespace-pre-wrap break-words">
-                      {children}
-                    </p>
-                  ),
-                  li: ({ children }) => (
-                    <li className="whitespace-pre-wrap break-words">
-                      {children}
-                    </li>
-                  ),
-                }}
-              >
-                {markdown}
-              </ReactMarkdown>
+              <MarkdownViewer content={markdown} className="!p-0 !border-0 bg-transparent" />
             </article>
           </div>
         )}

@@ -1,4 +1,4 @@
-"""User authentication & account management CRUD."""
+"""User authentication & account management CRUD — PostgreSQL version."""
 
 from __future__ import annotations
 
@@ -26,7 +26,8 @@ def create_user(
                 username, email, password_hash, role, status,
                 email_verification_token_hash, email_verification_expires_at,
                 email_verified_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
             """,
             (
                 username.strip(),
@@ -40,13 +41,17 @@ def create_user(
                 now,
             ),
         )
-        user_id = int(cur.lastrowid)
+        row     = cur.fetchone()
+        user_id = int(row["id"])
+        conn.commit()
     return get_user_by_id(user_id)
 
 
 def get_user_by_username(username: str) -> dict[str, Any] | None:
     with _connect() as conn:
-        row = conn.execute("SELECT * FROM users WHERE username = ?", (username.strip(),)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM users WHERE username = %s", (username.strip(),)
+        ).fetchone()
     return dict(row) if row else None
 
 
@@ -54,14 +59,16 @@ def get_user_by_email(email: str) -> dict[str, Any] | None:
     normalized = email.strip().lower()
     with _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM users WHERE email = ? COLLATE NOCASE", (normalized,)
+            "SELECT * FROM users WHERE LOWER(email) = LOWER(%s)", (normalized,)
         ).fetchone()
     return dict(row) if row else None
 
 
 def get_user_by_id(user_id: int) -> dict[str, Any] | None:
     with _connect() as conn:
-        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM users WHERE id = %s", (user_id,)
+        ).fetchone()
     return dict(row) if row else None
 
 
@@ -77,7 +84,7 @@ def list_users() -> list[dict[str, Any]]:
                    us.last_activity
             FROM users u
             LEFT JOIN usage_stats us ON us.user_id = u.id
-            ORDER BY datetime(u.created_at) DESC
+            ORDER BY u.created_at DESC
             """
         ).fetchall()
     return [dict(r) for r in rows]
@@ -86,9 +93,10 @@ def list_users() -> list[dict[str, Any]]:
 def update_last_login(user_id: int) -> None:
     with _connect() as conn:
         conn.execute(
-            "UPDATE users SET last_login = ?, failed_login_attempts = 0, locked_until = NULL WHERE id = ?",
+            "UPDATE users SET last_login = %s, failed_login_attempts = 0, locked_until = NULL WHERE id = %s",
             (_utc_now(), user_id),
         )
+        conn.commit()
 
 
 def register_failed_login(
@@ -100,7 +108,7 @@ def register_failed_login(
     now_iso = now.isoformat()
     with _connect() as conn:
         row = conn.execute(
-            "SELECT failed_login_attempts FROM users WHERE id = ?", (user_id,)
+            "SELECT failed_login_attempts FROM users WHERE id = %s", (user_id,)
         ).fetchone()
         if not row:
             return None
@@ -110,18 +118,20 @@ def register_failed_login(
             locked_until = (now + timedelta(minutes=max(1, lock_minutes))).isoformat()
             attempts     = 0
         conn.execute(
-            "UPDATE users SET failed_login_attempts = ?, locked_until = ?, last_failed_login = ? WHERE id = ?",
+            "UPDATE users SET failed_login_attempts = %s, locked_until = %s, last_failed_login = %s WHERE id = %s",
             (attempts, locked_until, now_iso, user_id),
         )
+        conn.commit()
     return get_user_by_id(user_id)
 
 
 def reset_failed_login_attempts(user_id: int) -> None:
     with _connect() as conn:
         conn.execute(
-            "UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?",
+            "UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = %s",
             (user_id,),
         )
+        conn.commit()
 
 
 def is_account_locked(user: dict[str, Any]) -> tuple[bool, int]:
@@ -149,9 +159,10 @@ def record_auth_login_attempt(
 ) -> None:
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO auth_login_attempts(user_id, email, ip_address, success, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (user_id, (email or "").strip().lower(), ip_address, 1 if success else 0, reason, _utc_now()),
+            "INSERT INTO auth_login_attempts(user_id, email, ip_address, success, reason, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+            (user_id, (email or "").strip().lower(), ip_address, success, reason, _utc_now()),
         )
+        conn.commit()
 
 
 def any_admin_exists() -> bool:
@@ -163,10 +174,11 @@ def any_admin_exists() -> bool:
 def set_user_active(user_id: int, is_active: bool) -> dict[str, Any] | None:
     with _connect() as conn:
         cur = conn.execute(
-            "UPDATE users SET is_active = ? WHERE id = ?", (1 if is_active else 0, user_id)
+            "UPDATE users SET is_active = %s WHERE id = %s RETURNING id", (is_active, user_id)
         )
-        if cur.rowcount <= 0:
+        if not cur.fetchone():
             return None
+        conn.commit()
     return get_user_by_id(user_id)
 
 
@@ -178,24 +190,27 @@ def count_admin_users() -> int:
 
 def delete_user_by_id(user_id: int) -> bool:
     with _connect() as conn:
-        cur = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
-        return cur.rowcount > 0
+        cur = conn.execute("DELETE FROM users WHERE id = %s RETURNING id", (user_id,))
+        deleted = cur.fetchone() is not None
+        conn.commit()
+    return deleted
 
 
 def save_password_reset_token(user_id: int, token_hash: str, expires_at: str) -> None:
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO password_reset_tokens(user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO password_reset_tokens(user_id, token_hash, expires_at, created_at) VALUES (%s, %s, %s, %s)",
             (user_id, token_hash, expires_at, _utc_now()),
         )
+        conn.commit()
 
 
 def get_valid_password_reset_token(token_hash: str) -> dict[str, Any] | None:
     now = _utc_now()
     with _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM password_reset_tokens WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?",
-            (token_hash, now)
+            "SELECT * FROM password_reset_tokens WHERE token_hash = %s AND used_at IS NULL AND expires_at > %s",
+            (token_hash, now),
         ).fetchone()
     return dict(row) if row else None
 
@@ -203,37 +218,41 @@ def get_valid_password_reset_token(token_hash: str) -> dict[str, Any] | None:
 def mark_password_reset_token_used(token_id: int) -> None:
     with _connect() as conn:
         conn.execute(
-            "UPDATE password_reset_tokens SET used_at = ? WHERE id = ?",
+            "UPDATE password_reset_tokens SET used_at = %s WHERE id = %s",
             (_utc_now(), token_id),
         )
+        conn.commit()
 
 
 def update_user_password(user_id: int, password_hash: str) -> bool:
     with _connect() as conn:
         cur = conn.execute(
-            "UPDATE users SET password_hash = ? WHERE id = ?",
+            "UPDATE users SET password_hash = %s WHERE id = %s RETURNING id",
             (password_hash, user_id),
         )
-        return cur.rowcount > 0
+        updated = cur.fetchone() is not None
+        conn.commit()
+    return updated
 
 
 def update_user_profile(user_id: int, username: str | None, email: str | None) -> dict[str, Any] | None:
     updates = []
-    params = []
+    params  = []
     if username is not None:
-        updates.append("username = ?")
+        updates.append("username = %s")
         params.append(username.strip())
     if email is not None:
-        updates.append("email = ?")
+        updates.append("email = %s")
         params.append(email.strip().lower())
-    
+
     if not updates:
         return get_user_by_id(user_id)
-        
+
     params.append(user_id)
-    query = f"UPDATE users SET {', '.join(updates)} WHERE id = ?"
-    
+    query = f"UPDATE users SET {', '.join(updates)} WHERE id = %s"
+
     with _connect() as conn:
         conn.execute(query, tuple(params))
-        
+        conn.commit()
+
     return get_user_by_id(user_id)

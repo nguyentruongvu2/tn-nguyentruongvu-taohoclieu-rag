@@ -126,39 +126,78 @@ class PptxRenderer:
         except Exception as exc:
             logger.debug("add_bullets: %s", exc)
 
-    def generate(self, items: list, deck_title: str = "Bài giảng") -> bytes:
+    def generate(self, items: list, deck_title: str = "Bài giảng", template_path: str | None = None) -> bytes:
         if not PPTX_OK:
             raise RuntimeError(f"python-pptx init failed: {PPTX_ERROR}")
 
-        prs = _Presentation()
-        prs.slide_width  = _Inches(13.33)
-        prs.slide_height = _Inches(7.5)
-        blank = prs.slide_layouts[6]
-        total = len(items)
+        if template_path:
+            prs = _Presentation(template_path)
+            # Try to use layout 1 (usually Title and Content), fallback to 0 or 6
+            layout_idx = 1 if len(prs.slide_layouts) > 1 else 0
+            slide_layout = prs.slide_layouts[layout_idx]
 
-        for idx, item in enumerate(items):
-            try:
-                slide = prs.slides.add_slide(blank)
+            for idx, item in enumerate(items):
                 try:
-                    bg = slide.background.fill
-                    bg.solid()
-                    bg.fore_color.rgb = self._rgb(self.C_BG)
-                except Exception:
-                    pass
+                    slide = prs.slides.add_slide(slide_layout)
+                    
+                    # Fill Title
+                    if slide.shapes.title:
+                        slide.shapes.title.text = item.title
+                    
+                    # Fill Body Placeholders
+                    body_shape = None
+                    for shape in slide.placeholders:
+                        if shape != slide.shapes.title and shape.has_text_frame:
+                            body_shape = shape
+                            break
+                            
+                    if body_shape:
+                        tf = body_shape.text_frame
+                        tf.text = "" # Clear default
+                        for i, bullet in enumerate(item.bullet_points):
+                            p = tf.paragraphs[0] if (i == 0 and tf.paragraphs) else tf.add_paragraph()
+                            p.text = str(bullet)
+                            # Let the template handle font and bullet styles automatically
+                    
+                    if item.speaker_notes and slide.has_notes_slide:
+                        try:
+                            slide.notes_slide.notes_text_frame.text = str(item.speaker_notes)
+                        except Exception:
+                            pass
+                except Exception as exc:
+                    logger.error("Slide %d build error with template: %s", idx, exc)
 
-                self._add_rect(slide, _Inches(0), _Inches(0), _Inches(0.12), _Inches(7.5), self.C_ACCENT)
-                self._add_text(slide, _Inches(0.3), _Inches(0.2), _Inches(12.7), _Inches(1.3), item.title, 40, True, self.C_WHITE, font_name="Arial") # Title font size 40pt
-                self._add_rect(slide, _Inches(0.3), _Inches(1.6), _Inches(12.7), _Inches(0.045), self.C_ACCENT)
-                self._add_bullets(slide, _Inches(0.45), _Inches(1.75), _Inches(12.4), _Inches(5.3), item.bullet_points)
-                self._add_text(slide, _Inches(11.5), _Inches(7.1), _Inches(1.7), _Inches(0.35), f"{idx+1}/{total}", 11, False, self.C_DIM, wrap=False)
+        else:
+            # Default manual drawing
+            prs = _Presentation()
+            prs.slide_width  = _Inches(13.33)
+            prs.slide_height = _Inches(7.5)
+            blank = prs.slide_layouts[6]
+            total = len(items)
 
-                if item.speaker_notes:
+            for idx, item in enumerate(items):
+                try:
+                    slide = prs.slides.add_slide(blank)
                     try:
-                        slide.notes_slide.notes_text_frame.text = str(item.speaker_notes)
+                        bg = slide.background.fill
+                        bg.solid()
+                        bg.fore_color.rgb = self._rgb(self.C_BG)
                     except Exception:
                         pass
-            except Exception as exc:
-                logger.error("Slide %d build error: %s", idx, exc)
+
+                    self._add_rect(slide, _Inches(0), _Inches(0), _Inches(0.12), _Inches(7.5), self.C_ACCENT)
+                    self._add_text(slide, _Inches(0.3), _Inches(0.2), _Inches(12.7), _Inches(1.3), item.title, 40, True, self.C_WHITE, font_name="Arial")
+                    self._add_rect(slide, _Inches(0.3), _Inches(1.6), _Inches(12.7), _Inches(0.045), self.C_ACCENT)
+                    self._add_bullets(slide, _Inches(0.45), _Inches(1.75), _Inches(12.4), _Inches(5.3), item.bullet_points)
+                    self._add_text(slide, _Inches(11.5), _Inches(7.1), _Inches(1.7), _Inches(0.35), f"{idx+1}/{total}", 11, False, self.C_DIM, wrap=False)
+
+                    if item.speaker_notes:
+                        try:
+                            slide.notes_slide.notes_text_frame.text = str(item.speaker_notes)
+                        except Exception:
+                            pass
+                except Exception as exc:
+                    logger.error("Slide %d build error: %s", idx, exc)
 
         buf = io.BytesIO()
         prs.save(buf)

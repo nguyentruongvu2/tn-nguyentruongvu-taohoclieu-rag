@@ -5,6 +5,7 @@ import {
   downloadPptx,
   generateSlideOutline,
   saveSlidesDraft,
+  uploadTemplate,
   type SlideItem,
 } from "../services/api";
 import "./SlidePage.css";
@@ -320,6 +321,11 @@ export default function SlidePage({
   const [isCloudSaving, setIsCloudSaving] = useState(false);
   const cloudSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [templatePath, setTemplatePath] = useState<string>("");
+  const [templateName, setTemplateName] = useState<string>("");
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // Inline edit state
   const [editTitle, setEditTitle] = useState(false);
   const [editBullet, setEditBullet] = useState<number | null>(null);
@@ -456,7 +462,7 @@ export default function SlidePage({
     setStep("downloading");
     setError("");
     try {
-      const blob = await downloadPptx(slides, projectTitle);
+      const blob = await downloadPptx(slides, projectTitle, templatePath);
       // Validate we got actual pptx bytes
       if (blob.size < 100)
         throw new Error("File xuất ra bị rỗng. Vui lòng thử lại.");
@@ -604,6 +610,29 @@ export default function SlidePage({
     setActiveIdx(to);
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".pptx")) {
+      setError("Chỉ hỗ trợ file .pptx");
+      return;
+    }
+    setIsUploading(true);
+    setError("");
+    try {
+      const res = await uploadTemplate(file);
+      if (res.success) {
+        setTemplatePath(res.template_path);
+        setTemplateName(res.filename);
+      }
+    } catch (err: any) {
+      setError("Upload template thất bại: " + err.message);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   // ── Render ────────────────────────────────────────────────────────────────
   const isLoading = step === "generating";
   const isDownloading = step === "downloading";
@@ -649,6 +678,39 @@ export default function SlidePage({
           >
             {isLoading ? "⏳ Đang tạo..." : "✨ Khởi tạo Slide"}
           </button>
+          
+          <input 
+            type="file" 
+            accept=".pptx" 
+            ref={fileInputRef} 
+            style={{ display: "none" }} 
+            onChange={handleFileUpload} 
+          />
+          <button
+            style={{ ...S.btn, ...S.btnSecondary, position: "relative" }}
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            title={templateName ? `Đang dùng mẫu: ${templateName}` : "Tải lên file PPTX làm mẫu slide"}
+          >
+            {isUploading ? "⏳ Tải lên..." : templateName ? `🎨 Mẫu: ${templateName.slice(0, 15)}...` : "🎨 Chọn Template"}
+            {templateName && (
+              <span 
+                style={{ 
+                  position: "absolute", top: -5, right: -5, background: "#ef4444", 
+                  color: "#fff", borderRadius: "50%", width: 16, height: 16, 
+                  fontSize: 10, display: "flex", alignItems: "center", justifyContent: "center"
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setTemplatePath("");
+                  setTemplateName("");
+                }}
+              >
+                ✕
+              </span>
+            )}
+          </button>
+
           {slides.length > 0 && (
             <>
               <button

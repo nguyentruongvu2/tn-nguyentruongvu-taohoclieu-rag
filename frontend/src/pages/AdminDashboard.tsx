@@ -711,9 +711,12 @@ export default function AdminDashboard() {
             </div>
             <div className="flex-1 overflow-auto p-6 bg-white">
               {previewLoading ? (
-                <div className="flex flex-col items-center justify-center h-full text-gray-400">
-                  <div className="w-8 h-8 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-4"></div>
-                  <p>Đang tải nội dung tài liệu...</p>
+                <div className="space-y-4 animate-pulse">
+                  <div className="h-6 bg-slate-200 rounded w-1/3 mb-6"></div>
+                  <div className="h-4 bg-slate-100 rounded w-full"></div>
+                  <div className="h-4 bg-slate-100 rounded w-5/6"></div>
+                  <div className="h-4 bg-slate-100 rounded w-4/5"></div>
+                  <div className="h-4 bg-slate-100 rounded w-full"></div>
                 </div>
               ) : (
                 <div className="prose prose-sm sm:prose-base max-w-none prose-headings:text-gray-900 prose-p:text-gray-700 prose-a:text-blue-600">

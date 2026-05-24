@@ -119,15 +119,6 @@ const GENERATION_FLOW_STEPS = [
   { key: "cau hoi",    label: "7. Câu hỏi",     keywords: ["cau hoi", "on tap", "quiz", "trac nghiem", "bai tap"] },
 ];
 
-function getSectionFlowStep(sectionTitle: string): number {
-  const normalized = normalizePromptKey(sectionTitle);
-  for (let i = 0; i < GENERATION_FLOW_STEPS.length; i++) {
-    if (GENERATION_FLOW_STEPS[i].keywords.some((kw) => normalized.includes(kw))) {
-      return i;
-    }
-  }
-  return 3; // Default: treat as main content
-}
 
 function getSectionOrderWarning(
   section: Section,
@@ -639,6 +630,7 @@ export default function TeachingMaterialEditor() {
     outlinePrompt: string;
   }>({ sections: [], activeSectionId: "", outlinePrompt: "" });
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const outlinePromptRef = useRef<HTMLTextAreaElement | null>(null);
   const downloadMenuRef = useRef<HTMLDivElement | null>(null);
   const chunkCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -908,10 +900,7 @@ export default function TeachingMaterialEditor() {
     () => (activeSection ? getSectionOrderWarning(activeSection, sections) : null),
     [activeSection, sections],
   );
-  const currentFlowStep = useMemo(
-    () => (activeSection ? getSectionFlowStep(activeSection.title) : -1),
-    [activeSection],
-  );
+
   const canShowPreviewCitation = useMemo(
     () => shouldShowCitationInPreview(activeSection),
     [activeSection],
@@ -1053,6 +1042,20 @@ export default function TeachingMaterialEditor() {
       setShowOutlinePromptSuggestionHint(false);
     }
   }, [outlinePrompt]);
+
+  useEffect(() => {
+    if (promptInputRef.current) {
+      promptInputRef.current.style.height = "auto";
+      promptInputRef.current.style.height = `${promptInputRef.current.scrollHeight}px`;
+    }
+  }, [activeSectionId, activeSection?.prompt]);
+
+  useEffect(() => {
+    if (outlinePromptRef.current) {
+      outlinePromptRef.current.style.height = "auto";
+      outlinePromptRef.current.style.height = `${outlinePromptRef.current.scrollHeight}px`;
+    }
+  }, [outlinePrompt, sections.length]);
 
   useEffect(() => {
     if (!isDownloadMenuOpen) return;
@@ -1597,23 +1600,23 @@ export default function TeachingMaterialEditor() {
     <div className="h-screen w-full flex flex-col bg-slate-50 overflow-hidden">
       {/* 1. Navbar */}
       <header className="h-14 bg-white border-b flex items-center justify-between px-4 shrink-0">
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 flex-1 min-w-0 mr-4">
           <button
             onClick={() => void handleBackToList()}
-            className="text-slate-500 hover:text-blue-600 font-medium"
+            className="text-slate-500 hover:text-blue-600 font-medium shrink-0 whitespace-nowrap"
           >
             ← Quay lại
           </button>
-          <div className="h-4 w-px bg-slate-200"></div>
-          <h1 className="font-bold text-slate-800 text-lg flex items-center gap-2">
-            <FileText size={20} className="text-blue-600" />
-            {projectTitle}
+          <div className="h-4 w-px bg-slate-200 shrink-0"></div>
+          <h1 className="font-bold text-slate-800 text-lg flex items-center gap-2 min-w-0">
+            <FileText size={20} className="text-blue-600 shrink-0" />
+            <span className="truncate" title={projectTitle}>{projectTitle}</span>
           </h1>
 
           <select
             value={projectTone}
             onChange={(e) => void handleUpdateTone(e.target.value)}
-            className="text-xs font-medium border border-slate-200 rounded-full px-3 py-1 bg-slate-50 text-slate-700 outline-none hover:bg-slate-100 transition focus:ring-2 focus:ring-blue-500/20"
+            className="text-xs font-medium border border-slate-200 rounded-full px-3 py-1 bg-slate-50 text-slate-700 outline-none hover:bg-slate-100 transition focus:ring-2 focus:ring-blue-500/20 shrink-0"
           >
             <option value="academic">Giọng văn: Hàn lâm 🎓</option>
             <option value="inspiring">Giọng văn: Truyền cảm hứng 🌟</option>
@@ -1621,7 +1624,7 @@ export default function TeachingMaterialEditor() {
           </select>
 
           {/* Auto Save Status */}
-          <div className="ml-4 flex items-center text-sm font-medium">
+          <div className="ml-4 flex items-center text-sm font-medium shrink-0">
             {saveStatus === "saving" && (
               <span className="text-amber-500 flex items-center gap-1">
                 <Loader2 size={14} className="animate-spin" /> Đang lưu...
@@ -1638,7 +1641,7 @@ export default function TeachingMaterialEditor() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           <button
             onClick={() => void handleOpenPreviewTab()}
             className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-md font-medium transition text-sm"
@@ -1870,8 +1873,15 @@ export default function TeachingMaterialEditor() {
         {/* Middle Column: Main Editor */}
         <main className="flex-1 flex flex-col bg-white overflow-hidden relative">
           {loading && (
-            <div className="absolute inset-0 bg-white/80 flex items-center justify-center z-20 text-slate-600">
-              Đang tải dự án...
+            <div className="absolute inset-0 bg-white/80 flex items-center justify-center z-20">
+              <div className="w-full max-w-md space-y-4 animate-pulse p-6">
+                <div className="h-6 bg-slate-200 rounded w-1/3 mb-4"></div>
+                <div className="space-y-3">
+                  <div className="h-4 bg-slate-100 rounded w-full"></div>
+                  <div className="h-4 bg-slate-100 rounded w-5/6"></div>
+                  <div className="h-4 bg-slate-100 rounded w-4/5"></div>
+                </div>
+              </div>
             </div>
           )}
           {error && (
@@ -1909,9 +1919,14 @@ export default function TeachingMaterialEditor() {
                   </p>
                 </div>
 
-                <textarea
+                 <textarea
+                  ref={outlinePromptRef}
                   value={outlinePrompt}
-                  onChange={(e) => setOutlinePrompt(e.target.value)}
+                  onChange={(e) => {
+                    setOutlinePrompt(e.target.value);
+                    e.target.style.height = "auto";
+                    e.target.style.height = `${e.target.scrollHeight}px`;
+                  }}
                   onKeyDown={(e) => {
                     if (
                       e.key === "Tab" &&
@@ -1921,9 +1936,15 @@ export default function TeachingMaterialEditor() {
                       e.preventDefault();
                       setOutlinePrompt(TOC_PROMPT_SUGGESTION);
                       setShowOutlinePromptSuggestionHint(false);
+                      setTimeout(() => {
+                        if (outlinePromptRef.current) {
+                          outlinePromptRef.current.style.height = "auto";
+                          outlinePromptRef.current.style.height = `${outlinePromptRef.current.scrollHeight}px`;
+                        }
+                      }, 0);
                     }
                   }}
-                  className="w-full border rounded-lg p-3 min-h-[100px] text-slate-700 outline-none focus:ring-2 ring-blue-200"
+                  className="w-full border rounded-lg p-3 min-h-[48px] max-h-[300px] overflow-y-auto resize-none text-slate-700 outline-none focus:ring-2 ring-blue-200"
                   placeholder={TOC_PROMPT_SUGGESTION}
                 />
                 {showOutlinePromptSuggestionHint &&
@@ -1949,37 +1970,7 @@ export default function TeachingMaterialEditor() {
             <>
               {/* Section Header & Settings */}
               <div className="p-6 border-b shrink-0 bg-slate-50/50">
-                {/* Workflow Step Indicator */}
-                {currentFlowStep >= 0 && (
-                  <div className="mb-3 flex items-center gap-1.5 overflow-x-auto pb-1">
-                    {GENERATION_FLOW_STEPS.map((step, idx) => {
-                      const matchedSection = sections.find((s) =>
-                        step.keywords.some((kw) => normalizePromptKey(s.title).includes(kw))
-                      );
-                      const isDone = Boolean(matchedSection?.content?.trim());
-                      const isCurrent = idx === currentFlowStep;
-                      return (
-                        <div key={step.key} className="flex items-center gap-1 shrink-0">
-                          <span
-                            className={`text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${
-                              isCurrent
-                                ? "bg-blue-600 text-white"
-                                : isDone
-                                  ? "bg-emerald-100 text-emerald-700"
-                                  : "bg-slate-100 text-slate-400"
-                            }`}
-                            title={isDone ? "Dã sinh nội dung" : "Chưa sinh"}
-                          >
-                            {isDone ? "✓ " : ""}{step.label}
-                          </span>
-                          {idx < GENERATION_FLOW_STEPS.length - 1 && (
-                            <span className="text-slate-200 text-xs">›</span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+
                 <input
                   value={activeSection.title}
                   onChange={(e) =>
@@ -2027,7 +2018,7 @@ export default function TeachingMaterialEditor() {
                             }, 0);
                           }
                         }}
-                        className="w-full bg-transparent border-none outline-none resize-none text-slate-700 min-h-[80px] max-h-[300px] overflow-y-auto"
+                        className="w-full bg-transparent border-none outline-none resize-none text-slate-700 min-h-[40px] max-h-[300px] overflow-y-auto"
                         placeholder={
                           aiPromptSuggestion ||
                           "Nhập yêu cầu tạo nội dung cho mục này..."

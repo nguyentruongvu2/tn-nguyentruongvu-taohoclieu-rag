@@ -1,5 +1,38 @@
 services:
-  # Backend API Service
+  # ── Redis Cache ────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: rag-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── PostgreSQL Database ────────────────────────────────────────────────────
+  db:
+    image: postgres:15-alpine
+    container_name: rag-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rag_teaching_material}
+      POSTGRES_USER: ${POSTGRES_USER:-rag_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rag_secure_password_2024}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rag_user} -d ${POSTGRES_DB:-rag_teaching_material}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Backend API Service ────────────────────────────────────────────────────
   backend:
     build:
       context: ./backend
@@ -21,6 +54,17 @@ services:
       - COHERE_RERANK_MODEL=${COHERE_RERANK_MODEL:-rerank-v3.5}
       - OCR_CACHE_ENABLED=${OCR_CACHE_ENABLED:-true}
       - OCR_CACHE_DIR=${OCR_CACHE_DIR:-/app/uploads/ocr_page_cache}
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-rag_teaching_material}
+      - POSTGRES_USER=${POSTGRES_USER:-rag_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-rag_secure_password_2024}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test:
@@ -33,9 +77,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 5s
+      start_period: 15s
 
-  # Frontend Service
+  # ── Frontend Service ───────────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
@@ -58,6 +102,8 @@ volumes:
   uploads:
     driver: local
   chroma_db:
+    driver: local
+  postgres_data:
     driver: local
 
 networks:

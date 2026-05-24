@@ -23,6 +23,7 @@ services:
       - COHERE_RERANK_MODEL=${COHERE_RERANK_MODEL:-rerank-v3.5}
       - OCR_CACHE_ENABLED=${OCR_CACHE_ENABLED:-true}
       - OCR_CACHE_DIR=/app/uploads/ocr_page_cache
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"]
       interval: 30s

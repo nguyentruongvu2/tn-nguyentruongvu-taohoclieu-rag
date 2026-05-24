@@ -5,7 +5,8 @@ import os
 import re
 from typing import Dict, List, Optional, Set, Tuple, TYPE_CHECKING
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 if TYPE_CHECKING:
     from ..rag_pipeline import RAGPipeline
@@ -61,9 +62,13 @@ def parse_model_list_env(key: str) -> List[str]:
 def list_generate_models() -> Set[str]:
     available: Set[str] = set()
     try:
-        for model in genai.list_models():
-            methods = getattr(model, "supported_generation_methods", []) or []
-            if "generateContent" not in methods:
+        api_key = os.getenv("GEMINI_API_KEY", "")
+        if not api_key:
+            return available
+        client = genai.Client(api_key=api_key)
+        for model in client.models.list():
+            actions = getattr(model, "supported_actions", []) or []
+            if "generateContent" not in actions:
                 continue
             name = normalize_model_name(getattr(model, "name", ""))
             if name:
@@ -137,19 +142,22 @@ def generate_content_with_failover(
     max_output_tokens: Optional[int] = None,
 ) -> Tuple[str, bool]:
     errors: List[str] = []
-    generation_kwargs: Dict[str, object] = {}
-    generation_config: Dict[str, object] = {}
+    
+    config_args = {}
     if temperature is not None:
-        generation_config["temperature"] = temperature
+        config_args["temperature"] = temperature
     if max_output_tokens is not None:
-        generation_config["max_output_tokens"] = max_output_tokens
-    if generation_config:
-        generation_kwargs["generation_config"] = generation_config
+        config_args["max_output_tokens"] = max_output_tokens
+
+    client = genai.Client(api_key=pipeline.gemini_api_key)
 
     for model_name in runtime_model_order(pipeline):
         try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt, **generation_kwargs)
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(**config_args) if config_args else None
+            )
             text = (getattr(response, "text", "") or "").strip()
             if text:
                 if model_name != pipeline.gemini_llm_model:
@@ -171,21 +179,23 @@ def stream_content_with_failover(
     max_output_tokens: Optional[int] = None,
 ):
     errors: List[str] = []
-    generation_kwargs: Dict[str, object] = {}
-    generation_config: Dict[str, object] = {}
+    
+    config_args = {}
     if temperature is not None:
-        generation_config["temperature"] = temperature
+        config_args["temperature"] = temperature
     if max_output_tokens is not None:
-        generation_config["max_output_tokens"] = max_output_tokens
-    if generation_config:
-        generation_kwargs["generation_config"] = generation_config
+        config_args["max_output_tokens"] = max_output_tokens
+
+    client = genai.Client(api_key=pipeline.gemini_api_key)
 
     for model_name in runtime_model_order(pipeline):
         try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt, stream=True, **generation_kwargs)
+            response = client.models.generate_content_stream(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(**config_args) if config_args else None
+            )
             
-            # Keep track if we successfully yielded anything
             yielded_anything = False
             for chunk in response:
                 text = (getattr(chunk, "text", "") or "")
@@ -223,10 +233,13 @@ def check_model_health(pipeline: "RAGPipeline") -> Dict[str, object]:
 
     if pipeline.gemini_probe_generation:
         checks: Dict[str, object] = {}
+        client = genai.Client(api_key=pipeline.gemini_api_key)
         for model_name in runtime_model_order(pipeline):
             try:
-                model = genai.GenerativeModel(model_name)
-                response = model.generate_content(pipeline.gemini_probe_prompt)
+                response = client.models.generate_content(
+                    model=model_name, 
+                    contents=pipeline.gemini_probe_prompt
+                )
                 text = (getattr(response, "text", "") or "").strip()
                 checks[model_name] = {
                     "ok": bool(text),

@@ -100,3 +100,59 @@ body {
     min-height: 300px;
   }
 }
+
+/* Beautiful ChatGPT-style Tables for Markdown */
+.prose table, .markdown-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1.5rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.875rem;
+  border-radius: 0.5rem;
+  border: 1px solid #e5e7eb;
+}
+
+.prose thead, .markdown-preview thead {
+  background-color: #f8fafc;
+}
+
+.prose th, .markdown-preview th {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-weight: 600;
+  color: #334155;
+  border-bottom: 1px solid #e5e7eb;
+  border-right: 1px solid #e5e7eb;
+}
+
+.prose th:last-child, .markdown-preview th:last-child {
+  border-right: none;
+}
+
+.prose tbody tr, .markdown-preview tbody tr {
+  border-bottom: 1px solid #e5e7eb;
+  transition: background-color 0.15s ease;
+}
+
+.prose tbody tr:last-child, .markdown-preview tbody tr:last-child {
+  border-bottom: none;
+}
+
+.prose tbody tr:nth-child(even), .markdown-preview tbody tr:nth-child(even) {
+  background-color: #f8fafc;
+}
+
+.prose tbody tr:hover, .markdown-preview tbody tr:hover {
+  background-color: #f1f5f9;
+}
+
+.prose td, .markdown-preview td {
+  padding: 0.75rem 1rem;
+  color: #475569;
+  border-right: 1px solid #e5e7eb;
+  vertical-align: top;
+}
+
+.prose td:last-child, .markdown-preview td:last-child {
+  border-right: none;
+}

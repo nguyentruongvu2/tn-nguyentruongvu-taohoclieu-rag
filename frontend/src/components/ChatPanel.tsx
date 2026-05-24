@@ -1,0 +1,274 @@
+import React from 'react';
+import { Plus, X, ChevronDown, Check, User, Sparkles, BookOpen, Send, StopCircle } from 'lucide-react';
+import MarkdownViewer from './MarkdownViewer';
+
+export interface ChatPanelProps {
+  activeConversationId: string;
+  setActiveConversationId: (id: string) => void;
+  conversations: any[];
+  handleCreateConversation: () => void;
+  handleDeleteConversation: () => void;
+  
+  showDocDropdown: boolean;
+  setShowDocDropdown: (show: boolean) => void;
+  selectedDocIds: string[];
+  setSelectedDocIds: React.Dispatch<React.SetStateAction<string[]>>;
+  documents: any[];
+  
+  chatHistory: any[];
+  messagesEndRef: React.RefObject<HTMLDivElement>;
+  
+  message: string;
+  setMessage: (msg: string) => void;
+  handleSendMessage: () => void;
+  streaming: boolean;
+}
+
+export default function ChatPanel({
+  activeConversationId,
+  setActiveConversationId,
+  conversations,
+  handleCreateConversation,
+  handleDeleteConversation,
+  showDocDropdown,
+  setShowDocDropdown,
+  selectedDocIds,
+  setSelectedDocIds,
+  documents,
+  chatHistory,
+  messagesEndRef,
+  message,
+  setMessage,
+  handleSendMessage,
+  streaming
+}: ChatPanelProps) {
+  return (
+    <div className="h-full min-h-0 flex flex-col max-w-6xl mx-auto p-4 pt-2 xl:p-8 xl:pt-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="mb-4 mt-1 grid grid-cols-1 md:grid-cols-3 gap-3 shrink-0 relative z-30">
+        <select
+          value={activeConversationId}
+          onChange={(e) => setActiveConversationId(e.target.value)}
+          className="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white"
+        >
+          <option value="">Chọn cuộc hội thoại</option>
+          {conversations.map((conv) => (
+            <option key={conv.id} value={conv.id}>
+              {conv.title}
+            </option>
+          ))}
+        </select>
+
+        <div className="relative">
+          <button 
+            onClick={() => setShowDocDropdown(!showDocDropdown)}
+            className="flex flex-wrap items-center gap-2 p-2 border border-gray-200 rounded-xl bg-white min-h-[42px] max-w-md overflow-hidden text-left hover:border-blue-400 transition-colors w-full"
+          >
+            {selectedDocIds.length === 0 ? (
+              <span className="text-gray-400 text-sm p-1 flex items-center gap-2">
+                <Plus size={16} /> Chọn tài liệu...
+              </span>
+            ) : (
+              <div className="flex flex-wrap gap-1">
+                {selectedDocIds.slice(0, 2).map(id => {
+                  const doc = documents.find(d => String(d.id) === id);
+                  return (
+                    <div key={id} className="flex items-center gap-1 bg-blue-100 text-blue-700 px-2 py-0.5 rounded-lg text-[10px] font-medium">
+                      <span className="truncate max-w-[80px]">{doc?.original_filename || id}</span>
+                      <span onClick={(e) => { e.stopPropagation(); setSelectedDocIds(prev => prev.filter(i => i !== id)); }} className="hover:text-blue-900 cursor-pointer">
+                        <X size={10} />
+                      </span>
+                    </div>
+                  );
+                })}
+                {selectedDocIds.length > 2 && (
+                  <div className="flex items-center bg-gray-100 text-gray-600 px-2 py-0.5 rounded-lg text-[10px] font-medium">
+                    +{selectedDocIds.length - 2} tài liệu
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="ml-auto text-gray-400 pr-1">
+              <ChevronDown size={16} className={`transition-transform ${showDocDropdown ? "rotate-180" : ""}`} />
+            </div>
+          </button>
+
+          {showDocDropdown && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowDocDropdown(false)}></div>
+              <div className="absolute top-full left-0 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-2xl z-50 max-h-60 overflow-y-auto animate-in slide-in-from-top-2">
+                <div className="p-2 border-b border-gray-50 bg-gray-50/50 flex justify-between items-center">
+                  <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider px-2">Tài liệu của bạn ({documents.length})</span>
+                  <button onClick={() => setSelectedDocIds([])} className="text-[10px] text-blue-600 hover:underline px-2">Xóa tất cả</button>
+                </div>
+                {documents.map((doc) => (
+                  <div 
+                    key={doc.id} 
+                    onClick={() => {
+                      const id = String(doc.id);
+                      setSelectedDocIds(prev => 
+                        prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+                      );
+                    }}
+                    className={`px-4 py-2 text-sm cursor-pointer hover:bg-blue-50 flex items-center justify-between transition-colors ${selectedDocIds.includes(String(doc.id)) ? "text-blue-700 font-medium bg-blue-50/50" : "text-gray-700"}`}
+                  >
+                    <span className="truncate flex-1">{doc.original_filename}</span>
+                    {selectedDocIds.includes(String(doc.id)) ? (
+                      <div className="bg-blue-600 text-white rounded-full p-0.5">
+                        <Check size={12} />
+                      </div>
+                    ) : (
+                      <div className="border border-gray-200 rounded-md w-4 h-4"></div>
+                    )}
+                  </div>
+                ))}
+                {documents.length === 0 && (
+                  <div className="p-4 text-center text-gray-400 text-sm italic">
+                    Chưa có tài liệu nào
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={handleCreateConversation}
+            className="flex-1 border border-blue-200 text-blue-700 bg-blue-50 rounded-xl px-3 py-2 text-sm font-medium hover:bg-blue-100"
+          >
+            Cuộc hội thoại mới
+          </button>
+          <button
+            onClick={handleDeleteConversation}
+            disabled={!activeConversationId}
+            className="border border-red-200 text-red-700 bg-red-50 rounded-xl px-3 py-2 text-sm font-medium hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Xóa
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-y-auto pr-2 pb-4 space-y-6 custom-scrollbar rounded-2xl bg-white shadow-sm border border-gray-100 p-6 flex flex-col">
+        {chatHistory.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center text-gray-400 space-y-6 opacity-70">
+            <div className="w-24 h-24 bg-blue-50 rounded-3xl flex items-center justify-center rotate-12 shadow-sm border border-blue-100/50">
+              <Sparkles size={48} className="text-blue-400 -rotate-12" />
+            </div>
+            <div className="text-center">
+              <p className="text-xl font-bold text-gray-700 mb-2">
+                Chưa có cuộc hội thoại nào
+              </p>
+              <p className="text-sm font-medium">
+                Bắt đầu nhập câu hỏi bên dưới để RAG Assistant hỗ trợ bạn!
+              </p>
+            </div>
+          </div>
+        ) : (
+          chatHistory.map((msg, i) => (
+            <div key={i} className="space-y-6">
+              <div className="flex justify-end group">
+                <div className="bg-blue-600 text-white max-w-[85%] rounded-2xl rounded-tr-sm p-5 shadow-sm transform transition-transform origin-bottom-right hover:scale-[1.01]">
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap font-medium">
+                    {msg.question}
+                  </p>
+                </div>
+                <div className="w-8 flex-shrink-0 ml-3 hidden sm:flex items-end pb-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <User size={16} className="text-gray-400" />
+                </div>
+              </div>
+              <div className="flex justify-start items-start gap-4">
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center flex-shrink-0 shadow-md">
+                  <Sparkles size={14} className="text-white" />
+                </div>
+                <div className="bg-gray-50 border border-gray-100 text-gray-800 max-w-[85%] rounded-2xl rounded-tl-sm p-6 shadow-sm prose prose-sm sm:prose-base prose-blue max-w-none hover:shadow-md transition-shadow">
+                  {msg.answer ? (
+                    <div className="markdown-content">
+                      <MarkdownViewer content={msg.answer} className="!p-0 !border-0 bg-transparent" />
+                      {msg.metadata?.sources && msg.metadata.sources.length > 0 && (
+                        <div className="mt-6 pt-4 border-t border-gray-200">
+                          <div className="flex items-center gap-2 mb-3">
+                            <BookOpen size={14} className="text-blue-500" />
+                            <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Nguồn tham khảo</span>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {msg.metadata.sources.map((src: any, sIdx: number) => (
+                              <div 
+                                key={sIdx} 
+                                className="group/source relative bg-white border border-gray-200 rounded-lg px-3 py-1.5 flex items-center gap-2 hover:border-blue-300 hover:shadow-sm transition-all cursor-help"
+                                title={src.snippet}
+                              >
+                                <div className="w-5 h-5 rounded bg-blue-50 flex items-center justify-center text-[10px] font-bold text-blue-600 border border-blue-100">
+                                  {sIdx + 1}
+                                </div>
+                                <div className="flex flex-col">
+                                  <span className="text-[11px] font-semibold text-gray-700 truncate max-w-[150px]">
+                                    {src.title || src.source}
+                                  </span>
+                                  {src.page_number && src.page_number > 0 && (
+                                    <span className="text-[9px] text-gray-400">Trang {src.page_number}</span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex space-x-1.5 items-center h-6">
+                      <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                      <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                      <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce"></div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      <div className="mt-4 bg-white border border-gray-200 rounded-2xl shadow-sm focus-within:shadow-md focus-within:border-blue-300 transition-all duration-300 p-1.5 pl-4 flex items-end relative overflow-hidden">
+        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-400 opacity-20" />
+        <textarea
+          value={message}
+          rows={1}
+          onChange={(e) => {
+            setMessage(e.target.value);
+            e.target.style.height = "auto";
+            e.target.style.height = `${e.target.scrollHeight}px`;
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              handleSendMessage();
+              const target = e.target as HTMLTextAreaElement;
+              target.style.height = "auto";
+            }
+          }}
+          placeholder="Nhập câu hỏi của bạn về tài liệu... (Shift+Enter để xuống dòng)"
+          className="w-full max-h-32 min-h-[40px] bg-transparent outline-none resize-none py-2 text-gray-700 text-sm font-medium placeholder:font-normal placeholder-gray-400 custom-scrollbar"
+          disabled={streaming}
+        />
+        <div className="flex flex-shrink-0 ml-2 py-2 pr-1">
+          <button
+            onClick={handleSendMessage}
+            disabled={streaming || !message.trim()}
+            className={`p-3 rounded-xl flex items-center justify-center transition-all duration-300 ${
+              message.trim() && !streaming
+                ? "bg-blue-600 text-white shadow-md shadow-blue-200 hover:bg-blue-700 hover:-translate-y-0.5 active:translate-y-0"
+                : "bg-gray-100 text-gray-400 cursor-not-allowed"
+            }`}
+          >
+            {streaming ? (
+              <StopCircle size={20} className="animate-pulse" />
+            ) : (
+              <Send size={20} />
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

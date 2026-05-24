@@ -196,7 +196,7 @@ export default function GenerateMaterialForm({
           level,
           output_format: format as "lecture" | "slide" | "summary",
           length,
-        }).then((data) => {
+        }).then((data: any) => {
           if (!data.success) {
             throw new Error("Có lỗi xảy ra khi tạo tài liệu.");
           }
@@ -232,7 +232,7 @@ export default function GenerateMaterialForm({
           output_format: format as "lecture" | "slide" | "summary",
           length,
           previous_content: result?.content_markdown,
-        }).then((data) => {
+        }).then((data: any) => {
           if (!data.success) {
             throw new Error("Có lỗi xảy ra khi tạo lại tài liệu.");
           }
@@ -273,7 +273,7 @@ export default function GenerateMaterialForm({
           length,
           improve_prompt: improvePrompt,
           previous_content: result?.content_markdown,
-        }).then((data) => {
+        }).then((data: any) => {
           if (!data.success) {
             throw new Error("Có lỗi xảy ra khi cải thiện tài liệu.");
           }

@@ -77,11 +77,11 @@ RULES:
 - Each question targets a DIFFERENT concept.
 - No two questions share the same opening phrase or structure.
 - Vary correct answer position (not always A).
-- Answerable ONLY by someone who truly understands the material.
-- Do NOT copy text verbatim. Do NOT reference "the lesson" or "the text".
-- 4 plausible options; distractors reflect real misconceptions.
+- Answerable ONLY by someone who truly understands the material. Do NOT copy text verbatim.
+- QUESTION DESIGN (SCENARIO-BASED): For "application" and "analysis" questions, you MUST create a practical, real-world scenario or problem statement rather than asking direct theoretical questions.
+- DISTRACTOR DESIGN (CRITICAL): The 3 incorrect options (distractors) must NOT be obviously wrong. They MUST represent common student misconceptions, partial understandings, or logical errors based on the context.
 - Natural Vietnamese, domain-appropriate technical terms.
-- Explanation: 1-2 sentences clarifying WHY correct answer is right.
+- Explanation: 1-2 sentences. You MUST explain WHY the correct answer is right AND briefly point out the logical flaw in the most tempting distractor.
 - Restudy Hint: Identify the specific section or concept name from the lesson that the student should review if they fail this question (e.g., "Mục 2.1: Cách hoạt động của RAM").
 
 OUTPUT: Return ONLY valid JSON, no markdown, no extra text:

@@ -7,4 +7,3 @@ without any changes in routes or other modules.
 
 # Re-export entire public API from the db package
 from .db import *  # noqa: F401, F403
-from .db import AUTH_DB_PATH  # noqa: F401 — explicit for type checkers

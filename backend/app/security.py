@@ -11,7 +11,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from argon2 import PasswordHasher
@@ -112,16 +112,27 @@ def require_admin(current_user: dict[str, Any] = Depends(get_current_user)) -> d
     return current_user
 
 
-def enforce_rate_limit(user_id: int) -> None:
-    now = time.time()
-    q = _user_buckets[user_id]
-    window_start = now - 60.0
-    while q and q[0] < window_start:
-        q.popleft()
+from fastapi_limiter.depends import RateLimiter
 
-    if len(q) >= RATE_LIMIT_PER_MINUTE:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Rate limit exceeded ({RATE_LIMIT_PER_MINUTE}/minute)",
-        )
-    q.append(now)
+async def default_identifier(request: Request):
+    """Identify user by user_id if authenticated, otherwise by IP."""
+    user = getattr(request.state, "auth_user", None)
+    if user and user.get("id"):
+        return str(user["id"])
+    
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0]
+    return request.client.host if request.client else "127.0.0.1"
+
+# We provide a dependency for global usage (e.g. 100 requests per 60 seconds)
+rate_limiter = RateLimiter(times=RATE_LIMIT_PER_MINUTE, seconds=60, identifier=default_identifier)
+
+def enforce_rate_limit(user_id: int) -> None:
+    """
+    Deprecated manual rate limit check.
+    Now replaced by router-level Depends(rate_limiter) or FastAPI Limiter,
+    but kept for backward compatibility if called manually.
+    We just pass because FastAPILimiter handles it globally or via Depends.
+    """
+    pass
