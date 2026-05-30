@@ -10,11 +10,16 @@ import {
   Loader2,
   Play,
   PanelRight,
-  Download,
   Eye,
   EyeOff,
   ChevronDown,
   Zap,
+  ArrowLeft,
+  BookOpen,
+  HelpCircle,
+  Presentation,
+  Sparkles,
+  FileCode,
 } from "lucide-react";
 import { EnhancedMarkdownRenderer } from "../components/EnhancedMarkdownRenderer";
 import {
@@ -1562,10 +1567,23 @@ export default function TeachingMaterialEditor() {
       toastService.error("Bài giảng chưa có nội dung. Hãy sinh nội dung trước khi luyện tập quiz.");
       return;
     }
-    localStorage.setItem(
-      QUIZ_STORAGE_KEY,
-      JSON.stringify({ projectId, lessonContent, numQuestions: 5 }),
-    );
+    try {
+      const raw = localStorage.getItem(QUIZ_STORAGE_KEY);
+      let draft = { projectId, lessonContent, numQuestions: 5 };
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.projectId === projectId) {
+          // Preserve items and answers if they belong to the same project
+          draft = { ...parsed, lessonContent };
+        }
+      }
+      localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(draft));
+    } catch (e) {
+      localStorage.setItem(
+        QUIZ_STORAGE_KEY,
+        JSON.stringify({ projectId, lessonContent, numQuestions: 5 }),
+      );
+    }
     window.open("/quiz", "_blank", "noopener,noreferrer");
   };
 
@@ -1599,44 +1617,47 @@ export default function TeachingMaterialEditor() {
   return (
     <div className="h-screen w-full flex flex-col bg-slate-50 overflow-hidden">
       {/* 1. Navbar */}
-      <header className="h-14 bg-white border-b flex items-center justify-between px-4 shrink-0">
+      <header className="h-16 bg-white/80 backdrop-blur-md border-b border-slate-200/60 flex items-center justify-between px-6 shrink-0 sticky top-0 z-30 shadow-sm shadow-slate-100/50">
         <div className="flex items-center gap-4 flex-1 min-w-0 mr-4">
           <button
             onClick={() => void handleBackToList()}
-            className="text-slate-500 hover:text-blue-600 font-medium shrink-0 whitespace-nowrap"
+            className="flex items-center gap-2 text-slate-600 hover:text-blue-600 font-medium transition-all duration-200 shrink-0 text-sm bg-slate-50 hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-slate-200/60"
           >
-            ← Quay lại
+            <ArrowLeft size={16} />
+            <span>Quay lại</span>
           </button>
-          <div className="h-4 w-px bg-slate-200 shrink-0"></div>
+          <div className="h-5 w-px bg-slate-200 shrink-0"></div>
           <h1 className="font-bold text-slate-800 text-lg flex items-center gap-2 min-w-0">
             <FileText size={20} className="text-blue-600 shrink-0" />
-            <span className="truncate" title={projectTitle}>{projectTitle}</span>
+            <span className="truncate max-w-[200px] lg:max-w-[320px]" title={projectTitle}>{projectTitle}</span>
           </h1>
 
           <select
             value={projectTone}
             onChange={(e) => void handleUpdateTone(e.target.value)}
-            className="text-xs font-medium border border-slate-200 rounded-full px-3 py-1 bg-slate-50 text-slate-700 outline-none hover:bg-slate-100 transition focus:ring-2 focus:ring-blue-500/20 shrink-0"
+            className="text-xs font-semibold border border-slate-200/80 rounded-full px-3 py-1.5 bg-slate-50/50 text-slate-700 outline-none hover:bg-slate-100/80 transition duration-200 focus:ring-2 focus:ring-blue-500/20 shrink-0 cursor-pointer shadow-sm"
           >
-            <option value="academic">Giọng văn: Hàn lâm 🎓</option>
-            <option value="inspiring">Giọng văn: Truyền cảm hứng 🌟</option>
-            <option value="practical">Giọng văn: Thực tiễn 🛠️</option>
+            <option value="academic">🎓 Hàn lâm</option>
+            <option value="inspiring">🌟 Truyền cảm hứng</option>
+            <option value="practical">🛠️ Thực tiễn</option>
           </select>
 
           {/* Auto Save Status */}
-          <div className="ml-4 flex items-center text-sm font-medium shrink-0">
+          <div className="ml-4 flex items-center text-xs font-medium shrink-0 bg-slate-50 px-2.5 py-1 rounded-full border border-slate-100">
             {saveStatus === "saving" && (
-              <span className="text-amber-500 flex items-center gap-1">
-                <Loader2 size={14} className="animate-spin" /> Đang lưu...
+              <span className="text-amber-600 flex items-center gap-1.5">
+                <Loader2 size={12} className="animate-spin" /> Đang lưu...
               </span>
             )}
             {saveStatus === "saved" && (
-              <span className="text-emerald-500 flex items-center gap-1">
-                <CheckCircle2 size={14} /> Đã lưu
+              <span className="text-emerald-600 flex items-center gap-1.5">
+                <CheckCircle2 size={12} /> Đã lưu
               </span>
             )}
             {saveStatus === "idle" && (
-              <span className="text-slate-400">Đã đồng bộ</span>
+              <span className="text-slate-400 flex items-center gap-1.5">
+                <div className="h-1.5 w-1.5 rounded-full bg-slate-300"></div> Đã đồng bộ
+              </span>
             )}
           </div>
         </div>
@@ -1644,53 +1665,83 @@ export default function TeachingMaterialEditor() {
         <div className="flex items-center gap-3 shrink-0">
           <button
             onClick={() => void handleOpenPreviewTab()}
-            className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-md font-medium transition text-sm"
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg font-medium transition duration-200 text-sm shadow-sm"
           >
-            <Eye size={16} /> Xem nội dung đã lưu
+            <Eye size={15} />
+            <span>Xem trước</span>
           </button>
-          <button
-            onClick={handleOpenQuizTab}
-            className="flex items-center gap-2 px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-md font-medium transition text-sm"
-          >
-            📝 Luyện tập Quiz
-          </button>
-          <button
-            onClick={handleOpenSlideTab}
-            className="flex items-center gap-2 px-3 py-1.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded-md font-medium transition text-sm"
-          >
-            🖼️ Tạo Slide
-          </button>
+          
           <div className="relative" ref={downloadMenuRef}>
             <button
               onClick={() => setIsDownloadMenuOpen((prev) => !prev)}
               disabled={Boolean(exportingFormat)}
-              className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md font-medium transition text-sm disabled:opacity-60"
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition duration-200 text-sm shadow-sm hover:shadow shadow-blue-500/10 disabled:opacity-60"
             >
-              <Download size={16} />
-              {exportingFormat ? "Đang tải..." : "Download"}
-              <ChevronDown size={14} />
+              <Sparkles size={15} />
+              <span>Tài nguyên & Xuất</span>
+              <ChevronDown size={14} className={`transition-transform duration-200 ${isDownloadMenuOpen ? 'rotate-180' : ''}`} />
             </button>
 
             {isDownloadMenuOpen && (
-              <div className="absolute right-0 top-full mt-2 min-w-[150px] rounded-md border border-slate-200 bg-white shadow-lg z-30 overflow-hidden">
-                {EXPORT_FORMATS.map((format) => (
+              <div className="absolute right-0 top-full mt-2 w-56 rounded-xl border border-slate-200 bg-white shadow-xl z-30 overflow-hidden divide-y divide-slate-100 p-1.5 animate-in fade-in slide-in-from-top-2 duration-150">
+                <div className="py-1">
+                  <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    Tài nguyên AI
+                  </div>
                   <button
-                    key={format}
-                    onClick={() => void handleExportProject(format)}
-                    disabled={Boolean(exportingFormat)}
-                    className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                    onClick={() => {
+                      setIsDownloadMenuOpen(false);
+                      handleOpenQuizTab();
+                    }}
+                    className="w-full flex items-center gap-2.5 text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 rounded-lg transition duration-150"
                   >
-                    {EXPORT_LABELS[format]}
+                    <HelpCircle size={15} className="text-violet-500" />
+                    <span className="font-medium text-slate-700">Luyện tập Quiz</span>
                   </button>
-                ))}
+                  <button
+                    onClick={() => {
+                      setIsDownloadMenuOpen(false);
+                      handleOpenSlideTab();
+                    }}
+                    className="w-full flex items-center gap-2.5 text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 rounded-lg transition duration-150"
+                  >
+                    <Presentation size={15} className="text-indigo-500" />
+                    <span className="font-medium text-slate-700">Tạo Slide</span>
+                  </button>
+                </div>
+                
+                <div className="py-1">
+                  <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    Tải về bài giảng
+                  </div>
+                  {EXPORT_FORMATS.map((format) => (
+                    <button
+                      key={format}
+                      onClick={() => void handleExportProject(format)}
+                      disabled={Boolean(exportingFormat)}
+                      className="w-full flex items-center gap-2.5 text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 rounded-lg transition duration-150 disabled:opacity-60"
+                    >
+                      {format === 'md' ? (
+                        <FileCode size={15} className="text-emerald-500" />
+                      ) : (
+                        <FileText size={15} className="text-blue-500" />
+                      )}
+                      <span>{EXPORT_LABELS[format]}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>
           <button
             onClick={() => setShowContext(!showContext)}
-            className={`p-1.5 rounded-md transition ${showContext ? "bg-blue-100 text-blue-600" : "text-slate-500 hover:bg-slate-100"}`}
+            className={`p-2 rounded-lg transition-all duration-200 ${
+              showContext 
+                ? "bg-blue-50 text-blue-600 border border-blue-100" 
+                : "text-slate-500 hover:bg-slate-100 border border-transparent"
+            }`}
           >
-            <PanelRight size={20} />
+            <PanelRight size={18} />
           </button>
         </div>
       </header>
@@ -1698,25 +1749,25 @@ export default function TeachingMaterialEditor() {
       {/* 2. Three Column Layout */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left Column: Sections Sidebar */}
-        <aside className="w-64 bg-white border-r flex flex-col shrink-0 z-10 hidden md:flex">
-          <div className="p-3 border-b flex items-center justify-between">
+        <aside className="w-64 bg-white border-r border-slate-200/60 flex flex-col shrink-0 z-10 hidden md:flex shadow-sm shadow-slate-100/50">
+          <div className="p-4 border-b border-slate-100 flex items-center justify-between">
             <div>
-              <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wide">
+              <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider font-display">
                 Cấu trúc bài giảng
               </h3>
-              <p className="text-[11px] text-slate-500 mt-0.5">
+              <p className="text-[10px] text-slate-400 font-medium mt-0.5">
                 {generatedSectionsCount}/{sections.length} mục đã sinh nội dung
               </p>
             </div>
             <button
               onClick={handleCreateSection}
-              className="p-1 text-slate-400 hover:text-blue-600 transition"
-              title="Thêm section cuối"
+              className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition duration-200"
+              title="Thêm mục mới"
             >
-              <Plus size={18} />
+              <Plus size={16} />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          <div className="flex-1 overflow-y-auto p-3 space-y-1.5 custom-scrollbar">
             {/* ── Batch Group Buttons ── */}
             {BATCH_GROUPS.map((group) => {
               const matchedIds = matchesBatchGroup(orderedSections, group);
@@ -1728,38 +1779,39 @@ export default function TeachingMaterialEditor() {
               return (
                 <div
                   key={group.id}
-                  className={`mb-2 p-2 rounded-lg border ${
+                  className={`mb-3 p-3 rounded-xl border transition-all duration-200 ${
                     isRunning
-                      ? "border-amber-300 bg-amber-50"
-                      : "border-blue-100 bg-blue-50/60"
+                      ? "border-amber-200 bg-amber-50/50 shadow-sm"
+                      : "border-slate-100 bg-slate-50/50 hover:bg-slate-50 shadow-sm"
                   }`}
                 >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-semibold text-blue-700">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">
                       {group.id === "INTRO_GROUP" ? "🏗️ Mở đầu" : "🏁 Kết thúc"}
                     </span>
                     <button
                       onClick={() => handleBatchGenerate(group.id, matchedIds)}
                       disabled={Boolean(batchGeneratingGroupId)}
-                      className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded font-medium transition ${
+                      className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-md font-semibold transition-all duration-200 ${
                         Boolean(batchGeneratingGroupId)
-                          ? "bg-slate-200 text-slate-400 cursor-not-allowed"
-                          : "bg-blue-600 text-white hover:bg-blue-700"
+                          ? "bg-slate-100 text-slate-400 cursor-not-allowed border border-transparent"
+                          : "bg-white text-blue-600 border border-blue-200 hover:bg-blue-50 hover:border-blue-300"
                       }`}
                       title={group.label}
                     >
                       {isRunning ? (
-                        <Loader2 size={11} className="animate-spin" />
+                        <Loader2 size={10} className="animate-spin" />
                       ) : (
-                        <Zap size={11} />
+                        <Zap size={10} />
                       )}
-                      {isRunning ? "Đang tạo..." : "Tạo nhanh"}
+                      <span>{isRunning ? "Đang tạo..." : "Tạo nhanh"}</span>
                     </button>
                   </div>
-                  <div className="space-y-0.5">
+                  <div className="space-y-1">
                     {matchedTitles.map((title) => (
-                      <p key={title} className="text-xs text-blue-600 truncate pl-1">
-                        • {title}
+                      <p key={title} className="text-[11px] text-slate-500 font-medium truncate pl-1 flex items-center gap-1.5">
+                        <span className="h-1 w-1 rounded-full bg-slate-300"></span>
+                        {title}
                       </p>
                     ))}
                   </div>
@@ -1811,20 +1863,20 @@ export default function TeachingMaterialEditor() {
                     setDraggingSectionId(null);
                     setDragOverSectionId(null);
                   }}
-                  className={`group flex items-center gap-2 p-2 rounded-lg cursor-pointer transition ${
+                  className={`group flex items-center gap-2 mx-1 px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 ${
                     isActive
-                      ? "bg-blue-50 text-blue-700 font-medium"
-                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                  } ${isDropTarget ? "ring-2 ring-blue-300 bg-blue-50/70" : ""} ${
+                      ? "bg-blue-50 text-blue-700 font-semibold border border-blue-100/50 shadow-sm"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  } ${isDropTarget ? "ring-2 ring-blue-200 bg-blue-50/70" : ""} ${
                     isDragging ? "opacity-60" : ""
                   }`}
                 >
                   <GripVertical
-                    size={14}
-                    className="text-slate-300 opacity-0 group-hover:opacity-100 cursor-grab shrink-0"
+                    size={13}
+                    className="text-slate-300 opacity-0 group-hover:opacity-100 cursor-grab shrink-0 transition-opacity duration-150"
                   />
                   <span
-                    className="flex-1 truncate text-sm"
+                    className="flex-1 truncate text-xs"
                     style={{
                       paddingLeft: `${Math.max(0, s.level - 1) * 12}px`,
                     }}
@@ -1833,14 +1885,14 @@ export default function TeachingMaterialEditor() {
                     {s.title}
                   </span>
                   {s.isGenerating ? (
-                    <Loader2 size={14} className="animate-spin text-blue-500" />
+                    <Loader2 size={13} className="animate-spin text-blue-500" />
                   ) : hasGeneratedContent(s) ? (
                     <span className="shrink-0" title="Đã sinh nội dung">
-                      <CheckCircle2 size={14} className="text-emerald-500" />
+                      <CheckCircle2 size={13} className="text-emerald-500" />
                     </span>
                   ) : (
                     <span
-                      className="h-2.5 w-2.5 rounded-full bg-slate-300 shrink-0"
+                      className="h-1.5 w-1.5 rounded-full bg-slate-300 shrink-0"
                       title="Chưa sinh nội dung"
                     />
                   )}
@@ -1849,20 +1901,20 @@ export default function TeachingMaterialEditor() {
                       e.stopPropagation();
                       void handleInsertSectionAfter(s.order);
                     }}
-                    className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600"
-                    title="Chèn section phía dưới"
+                    className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 p-0.5 hover:bg-white rounded transition-all duration-150"
+                    title="Chèn mục phía dưới"
                   >
-                    <Plus size={14} />
+                    <Plus size={12} />
                   </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       void handleDeleteSection(s.id);
                     }}
-                    className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500"
-                    title="Xóa section"
+                    className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 p-0.5 hover:bg-white rounded transition-all duration-150"
+                    title="Xóa mục"
                   >
-                    <Trash2 size={14} />
+                    <Trash2 size={12} />
                   </button>
                 </div>
               );
@@ -1890,32 +1942,35 @@ export default function TeachingMaterialEditor() {
             </div>
           )}
           {sections.length === 0 ? (
-            <div className="flex-1 flex items-center justify-center p-8">
-              <div className="w-full max-w-2xl bg-white border rounded-xl p-6 shadow-sm">
-                <h2 className="text-xl font-semibold text-slate-800 mb-1">
-                  Bắt đầu bằng Prompt
+            <div className="flex-1 flex items-center justify-center p-8 bg-slate-50/50">
+              <div className="w-full max-w-2xl bg-white rounded-2xl p-8 shadow-xl shadow-slate-100 border border-slate-100 animate-in fade-in duration-200">
+                <h2 className="text-xl font-bold text-slate-800 mb-2 font-display">
+                  🚀 Bắt đầu Soạn thảo Bài giảng
                 </h2>
-                <p className="text-sm text-slate-500 mb-4">
-                  Nhập yêu cầu rồi bấm <strong>Sinh mục lục</strong> để tạo cấu trúc bài giảng.
+                <p className="text-sm text-slate-500 mb-6 leading-relaxed">
+                  Nhập yêu cầu tổng quan về bài giảng rồi bấm <strong className="text-blue-600 font-semibold">Sinh mục lục</strong> để AI tự động xây dựng cấu trúc bài học hoàn chỉnh.
                 </p>
 
                 {/* Workflow Guide */}
-                <div className="mb-5 bg-blue-50 border border-blue-100 rounded-lg p-4">
-                  <p className="text-xs font-semibold text-blue-700 mb-2 uppercase tracking-wide">📍 Quy trình đề xuất</p>
-                  <div className="flex flex-wrap gap-2">
+                <div className="mb-6 bg-blue-50/50 border border-blue-100/60 rounded-2xl p-5">
+                  <p className="text-xs font-bold text-blue-800 mb-3 uppercase tracking-wider flex items-center gap-1.5">
+                    <Sparkles size={14} className="text-blue-600" />
+                    <span>📍 Quy trình soạn thảo chuẩn AI</span>
+                  </p>
+                  <div className="flex flex-wrap gap-2.5">
                     {GENERATION_FLOW_STEPS.map((step, idx) => (
-                      <div key={step.key} className="flex items-center gap-1">
-                        <span className="text-xs bg-white border border-blue-200 text-blue-700 rounded-full px-2.5 py-0.5 font-medium">
+                      <div key={step.key} className="flex items-center gap-1.5">
+                        <span className="text-xs bg-white border border-blue-100 text-blue-700 rounded-full px-3 py-1 font-medium shadow-sm">
                           {step.label}
                         </span>
                         {idx < GENERATION_FLOW_STEPS.length - 1 && (
-                          <span className="text-blue-300">›</span>
+                          <span className="text-blue-300 font-bold">›</span>
                         )}
                       </div>
                     ))}
                   </div>
-                  <p className="text-[11px] text-blue-500 mt-2">
-                    ⚠️ Sinh theo thứ tự trên giúp AI duy trì tính nhất quán và các phần sau biết tham chiếu nội dung phần trước.
+                  <p className="text-[11px] text-blue-500/80 mt-3 leading-relaxed">
+                    💡 <strong>Mẹo:</strong> Sinh nội dung theo thứ tự đề xuất giúp mô hình duy trì tính nhất quán xuyên suốt bài học tốt hơn.
                   </p>
                 </div>
 
@@ -1944,24 +1999,36 @@ export default function TeachingMaterialEditor() {
                       }, 0);
                     }
                   }}
-                  className="w-full border rounded-lg p-3 min-h-[48px] max-h-[300px] overflow-y-auto resize-none text-slate-700 outline-none focus:ring-2 ring-blue-200"
+                  className="w-full border border-slate-200/85 rounded-xl p-4 min-h-[85px] max-h-[300px] overflow-y-auto resize-none text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all duration-200 shadow-inner bg-slate-50/50 focus:bg-white text-sm"
                   placeholder={TOC_PROMPT_SUGGESTION}
                 />
                 {showOutlinePromptSuggestionHint &&
                   !(outlinePrompt || "").trim() && (
-                    <p className="mt-2 text-xs text-blue-600">
-                      Nhấn Tab để chèn prompt gợi ý nhanh rồi bấm Sinh mục lục.
+                    <p className="mt-2.5 text-xs text-blue-600 font-medium">
+                      ⌨️ Nhấn Tab để điền nhanh prompt gợi ý rồi bấm Sinh mục lục.
                     </p>
                   )}
-                <div className="mt-4 flex justify-end">
+                <div className="mt-5 flex justify-end">
                   <button
                     onClick={handleGenerateOutline}
                     disabled={isGeneratingOutline}
-                    className={`px-4 py-2 rounded-lg font-medium transition ${isGeneratingOutline ? "bg-slate-100 text-slate-400" : "bg-blue-600 hover:bg-blue-700 text-white"}`}
+                    className={`px-5 py-2.5 rounded-xl font-bold transition-all duration-200 flex items-center gap-2 ${
+                      isGeneratingOutline 
+                        ? "bg-slate-100 text-slate-400 border border-transparent cursor-not-allowed" 
+                        : "bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-500/10 hover:shadow-lg hover:shadow-blue-500/20"
+                    }`}
                   >
-                    {isGeneratingOutline
-                      ? "Đang sinh mục lục..."
-                      : "Sinh mục lục"}
+                    {isGeneratingOutline ? (
+                      <>
+                        <Loader2 size={16} className="animate-spin" />
+                        <span>Đang sinh mục lục...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={16} />
+                        <span>Sinh mục lục</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
@@ -1969,22 +2036,22 @@ export default function TeachingMaterialEditor() {
           ) : activeSection ? (
             <>
               {/* Section Header & Settings */}
-              <div className="p-6 border-b shrink-0 bg-slate-50/50">
+              <div className="p-6 border-b border-slate-200/60 shrink-0 bg-slate-50/30">
 
                 <input
                   value={activeSection.title}
                   onChange={(e) =>
                     updateSection(activeSection.id, { title: e.target.value })
                   }
-                  className="text-2xl font-bold bg-transparent border-none outline-none w-full text-slate-800 mb-4 placeholder-slate-300"
+                  className="text-2xl font-bold bg-transparent border-none outline-none w-full text-slate-800 mb-4 placeholder-slate-300 font-display focus:ring-0"
                   placeholder="Tên section (VD: Mục tiêu bài học)..."
                 />
 
-                <div className="bg-white border rounded-xl shadow-sm p-4 relative group focus-within:ring-2 ring-blue-500/20 transition-all">
+                <div className="bg-slate-50/60 hover:bg-slate-50 border border-slate-200/80 rounded-xl p-4 relative group focus-within:border-blue-500 focus-within:bg-white focus-within:ring-4 focus-within:ring-blue-500/10 transition-all duration-200 shadow-sm">
                   <div className="flex items-start gap-4">
                     <div className="flex-1">
-                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                        Prompt (Yêu cầu cho AI)
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                        Yêu cầu cho AI (Prompt)
                       </label>
                       <textarea
                         ref={promptInputRef}
@@ -2018,7 +2085,7 @@ export default function TeachingMaterialEditor() {
                             }, 0);
                           }
                         }}
-                        className="w-full bg-transparent border-none outline-none resize-none text-slate-700 min-h-[40px] max-h-[300px] overflow-y-auto"
+                        className="w-full bg-transparent border-none outline-none resize-none text-slate-700 min-h-[40px] max-h-[300px] overflow-y-auto text-sm leading-relaxed"
                         placeholder={
                           aiPromptSuggestion ||
                           "Nhập yêu cầu tạo nội dung cho mục này..."
@@ -2026,46 +2093,65 @@ export default function TeachingMaterialEditor() {
                       />
                       {!(activeSection.prompt || "").trim() &&
                         aiPromptSuggestion && (
-                          <p className="mt-2 text-xs italic text-slate-400 leading-relaxed">
-                            💡 Gợi ý: {aiPromptSuggestion}
-                          </p>
+                          <div 
+                            onClick={() => {
+                              updateSection(activeSection.id, { prompt: aiPromptSuggestion });
+                              setShowPromptSuggestionHint(false);
+                              setTimeout(() => {
+                                  if (promptInputRef.current) {
+                                    promptInputRef.current.style.height = "auto";
+                                    promptInputRef.current.style.height = `${promptInputRef.current.scrollHeight}px`;
+                                  }
+                                }, 0);
+                            }}
+                            className="mt-2 text-xs italic text-blue-600 hover:text-blue-700 cursor-pointer transition-all duration-150 flex items-center gap-1 hover:underline"
+                          >
+                            💡 Ý tưởng gợi ý (Click hoặc nhấn Tab để chèn): "{aiPromptSuggestion}"
+                          </div>
                         )}
                       {showPromptSuggestionHint &&
                         !(activeSection.prompt || "").trim() && (
-                          <p className="mt-1 text-xs text-blue-600">
-                            Nhấn Tab để chèn prompt gợi ý nhanh, hoặc nhập
-                            prompt của bạn rồi bấm Tạo nội dung.
+                          <p className="mt-1 text-xs text-blue-600 font-medium">
+                            ⌨️ Nhấn Tab để chèn prompt gợi ý nhanh, hoặc nhập prompt của bạn rồi bấm Tạo nội dung.
                           </p>
                         )}
                       {/* ⚠️ Order warning */}
                       {sectionOrderWarning && (
-                        <div className="mt-2 flex items-start gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+                        <div className="mt-2.5 flex items-start gap-2 px-3 py-2 bg-amber-50 border border-amber-200/80 rounded-lg text-xs text-amber-700">
                           <span className="shrink-0 mt-0.5">⚠️</span>
                           <span>{sectionOrderWarning.replace(/^⚠️\s*/, "")}</span>
                         </div>
                       )}
-                      <p className="mt-2 text-[11px] text-slate-400">
-                        🔄 Luồng chuẩn: Tiêu đề → Mục tiêu → Giới thiệu → Nội dung chính → Ví dụ → Tóm tắt → Câu hỏi
+                      <p className="mt-2 text-[10px] text-slate-400 font-medium">
+                        🔄 Luồng chuẩn bài giảng: Tiêu đề → Mục tiêu → Giới thiệu → Nội dung chính → Ví dụ → Tóm tắt → Câu hỏi
                       </p>
                     </div>
                     <div className="shrink-0 flex flex-col gap-2">
                       <button
                         disabled={activeSection.isGenerating}
                         onClick={() => handleGenerate(activeSection.id)}
-                        className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium transition ${activeSection.isGenerating ? "bg-slate-100 text-slate-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700 text-white shadow-sm"}`}
+                        className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold transition-all duration-200 text-sm shadow-sm ${
+                          activeSection.isGenerating 
+                            ? "bg-slate-100 text-slate-400 cursor-not-allowed border border-transparent" 
+                            : activeSection.content 
+                              ? "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300" 
+                              : "bg-blue-600 hover:bg-blue-700 text-white shadow-blue-500/10 hover:shadow-lg hover:shadow-blue-500/20"
+                        }`}
                       >
                         {activeSection.isGenerating ? (
-                          <Loader2 size={16} className="animate-spin" />
+                          <Loader2 size={15} className="animate-spin" />
                         ) : activeSection.content ? (
-                          <RefreshCw size={16} />
+                          <RefreshCw size={15} />
                         ) : (
-                          <Play size={16} />
+                          <Play size={15} />
                         )}
-                        {activeSection.isGenerating
-                          ? "Đang tạo..."
-                          : activeSection.content
-                            ? "Tạo lại"
-                            : "Tạo nội dung"}
+                        <span>
+                          {activeSection.isGenerating
+                            ? "Đang tạo..."
+                            : activeSection.content
+                              ? "Tạo lại"
+                              : "Tạo nội dung"}
+                        </span>
                       </button>
                     </div>
                   </div>
@@ -2075,8 +2161,8 @@ export default function TeachingMaterialEditor() {
               {/* Markdown Editor */}
               <div className="flex-1 flex flex-col md:flex-row overflow-hidden w-full">
                 {/* Textarea */}
-                <div className="flex-1 flex flex-col border-r h-full relative">
-                  <div className="h-8 bg-slate-100 flex items-center px-4 border-b text-xs font-semibold text-slate-500 uppercase tracking-wider shrink-0">
+                <div className="flex-1 flex flex-col h-full bg-slate-50/50 relative">
+                  <div className="h-10 bg-slate-50 flex items-center px-6 border-b border-slate-100 text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0">
                     Markdown
                   </div>
                   <textarea
@@ -2086,14 +2172,14 @@ export default function TeachingMaterialEditor() {
                         content: e.target.value,
                       })
                     }
-                    className="flex-1 w-full bg-white p-6 outline-none resize-none text-slate-700 font-mono text-sm leading-relaxed"
+                    className="flex-1 w-full bg-transparent p-6 outline-none resize-none text-slate-700 font-mono text-xs leading-relaxed focus:bg-slate-50/20 transition-all duration-200"
                     placeholder="Chạy AI tạo hoặc nhập nội dung Markdown thủ công..."
                   />
                 </div>
 
                 {/* Live Preview */}
-                <div className="flex-1 flex flex-col h-full bg-slate-50/50">
-                  <div className="h-8 bg-slate-100 flex items-center justify-between px-4 border-b text-xs font-semibold text-slate-500 uppercase tracking-wider shrink-0">
+                <div className="flex-1 flex flex-col h-full bg-white relative border-l border-slate-100">
+                  <div className="h-10 bg-white flex items-center justify-between px-6 border-b border-slate-100 text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0">
                     <span>Preview</span>
                     <button
                       onClick={() =>
@@ -2118,7 +2204,7 @@ export default function TeachingMaterialEditor() {
                       <span>{showCitationsInPreview ? "Hiện nguồn" : "Ẩn nguồn"}</span>
                     </button>
                   </div>
-                  <div className="flex-1 p-6 overflow-y-auto prose markdown-preview max-w-none text-slate-800">
+                  <div className="flex-1 p-6 overflow-y-auto prose markdown-preview max-w-none text-slate-800 bg-white custom-scrollbar">
                     {activeSection.content ? (
                       <EnhancedMarkdownRenderer
                         content={previewContent}
@@ -2157,61 +2243,74 @@ export default function TeachingMaterialEditor() {
                         }}
                       />
                     ) : (
-                      <p className="text-slate-400 italic">
-                        Bản xem trước trống...
-                      </p>
+                      <div className="h-full flex flex-col items-center justify-center text-slate-400 p-8 text-center bg-slate-50/20">
+                        <FileText size={40} className="text-slate-300 mb-2.5" />
+                        <p className="text-xs font-semibold text-slate-400">
+                          Bản xem trước trống.
+                        </p>
+                        <p className="text-[11px] text-slate-400 mt-1 max-w-xs">
+                          Sử dụng AI tạo nội dung hoặc tự nhập Markdown để xem trước tại đây.
+                        </p>
+                      </div>
                     )}
                   </div>
                 </div>
               </div>
             </>
           ) : (
-            <div className="flex-1 flex items-center justify-center text-slate-400 p-8 text-center">
-              Chọn một section bên trái hoặc tạo mới để bắt đầu chỉnh sửa
+            <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8 text-center bg-slate-50/20 animate-in fade-in duration-200">
+              <FileText size={48} className="text-slate-300 mb-3 animate-pulse" />
+              <p className="text-sm font-semibold text-slate-500 font-display">Chưa có mục nào được chọn</p>
+              <p className="text-xs text-slate-400 mt-1 max-w-sm leading-relaxed">Chọn một mục ở danh sách bên trái hoặc tạo mới mục mới để bắt đầu chỉnh sửa</p>
             </div>
           )}
         </main>
 
         {/* Right Column: Context/RAG Panel */}
         {showContext && (
-          <aside className="w-80 bg-slate-50 border-l flex flex-col shrink-0 z-10 transition-all duration-300">
-            <div className="p-4 border-b bg-white">
-              <h3 className="font-semibold text-slate-800">Knowledge Base</h3>
-              <p className="text-xs text-slate-500 mt-1">
+          <aside className="w-80 bg-slate-50 border-l border-slate-200/60 flex flex-col shrink-0 z-10 transition-all duration-300">
+            <div className="p-4 border-b border-slate-100 bg-white">
+              <h3 className="font-bold text-slate-800 text-sm font-display uppercase tracking-wider">Knowledge Base</h3>
+              <p className="text-[10px] text-slate-400 font-medium mt-0.5">
                 Các nguồn tài liệu và đánh giá cho section này
               </p>
             </div>
-            <div className="flex-1 overflow-y-auto p-0">
+            <div className="flex-1 overflow-y-auto p-0 custom-scrollbar">
               <div className="bg-white flex flex-col min-h-full">
-                <div className="flex border-b bg-slate-50 text-sm font-medium">
-                  <button
-                    onClick={() => setActiveContextTab("source")}
-                    className={`flex-1 py-3 text-center transition ${
-                      activeContextTab === "source"
-                        ? "bg-white text-blue-600 border-b-2 border-blue-600 font-semibold"
-                        : "text-slate-600 hover:text-slate-800 hover:bg-slate-100"
-                    }`}
-                  >
-                    Nguồn
-                  </button>
-                  <button
-                    onClick={() => setActiveContextTab("evaluation")}
-                    className={`flex-1 py-3 text-center transition ${
-                      activeContextTab === "evaluation"
-                        ? "bg-white text-blue-600 border-b-2 border-blue-600 font-semibold"
-                        : "text-slate-600 hover:text-slate-800 hover:bg-slate-100"
-                    }`}
-                  >
-                    Đánh giá
-                  </button>
+                <div className="p-2 border-b border-slate-100 bg-slate-50/50">
+                  <div className="flex bg-slate-100 p-1 rounded-xl text-xs font-semibold relative">
+                    <button
+                      onClick={() => setActiveContextTab("source")}
+                      className={`flex-1 py-2 text-center rounded-lg transition-all duration-200 ${
+                        activeContextTab === "source"
+                          ? "bg-white text-blue-600 shadow-sm font-bold"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      Nguồn trích dẫn
+                    </button>
+                    <button
+                      onClick={() => setActiveContextTab("evaluation")}
+                      className={`flex-1 py-2 text-center rounded-lg transition-all duration-200 ${
+                        activeContextTab === "evaluation"
+                          ? "bg-white text-blue-600 shadow-sm font-bold"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      Đánh giá chất lượng
+                    </button>
+                  </div>
                 </div>
 
-                <div className="p-4 flex-1 space-y-3">
+                <div className="p-4 flex-1 space-y-4">
                   {activeContextTab === "source" ? (
                     activeChunks.length === 0 ? (
-                      <div className="text-xs text-slate-500 bg-slate-50 border rounded-lg p-3">
-                        Chưa có trích dẫn cho section này. Hãy bấm "Tạo nội
-                        dung" để truy xuất context mới.
+                      <div className="flex flex-col items-center justify-center text-center p-6 bg-slate-50/40 border border-dashed border-slate-200 rounded-xl animate-in fade-in duration-200 mt-2">
+                        <BookOpen size={24} className="text-slate-300 mb-2 animate-pulse" />
+                        <p className="text-xs font-semibold text-slate-500">Chưa có nguồn trích dẫn</p>
+                        <p className="text-[10px] text-slate-400 mt-1 max-w-[180px] leading-relaxed">
+                          Bấm "Tạo nội dung" để AI tự động truy xuất tài liệu tham khảo cho mục này.
+                        </p>
                       </div>
                     ) : (
                       activeChunks.map((chunk, index) => {
@@ -2253,20 +2352,25 @@ export default function TeachingMaterialEditor() {
                             ref={(node) => {
                               chunkCardRefs.current[chunk.id] = node;
                             }}
-                            className={`border rounded-lg p-3 bg-white transition ${
+                            className={`border rounded-xl p-4 bg-white transition-all duration-200 shadow-sm ${
                               isHighlighted
-                                ? "ring-2 ring-blue-400 border-blue-300 bg-blue-50/40"
-                                : ""
+                                ? "ring-2 ring-blue-500 border-blue-400 bg-blue-50/30 shadow-md shadow-blue-500/5 scale-[1.01]"
+                                : "border-slate-200/80 hover:border-slate-300 hover:shadow"
                             }`}
                           >
-                            <p className="text-sm font-semibold text-slate-800">
-                              📄 Chunk {index + 1} (Score:{" "}
-                              {chunk.score.toFixed(2)})
-                            </p>
-                            <p className="text-xs text-slate-600 mt-1">
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
+                                <span className="h-1.5 w-1.5 rounded-full bg-blue-600"></span>
+                                Đoạn trích {index + 1}
+                              </span>
+                              <span className="text-[10px] bg-slate-100 text-slate-500 font-semibold px-2 py-0.5 rounded-full">
+                                Trùng khớp: {chunk.score.toFixed(2)}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-slate-400 font-semibold leading-relaxed mb-2.5 break-words">
                               {citation}
                             </p>
-                            <blockquote className="mt-2 border-l-2 border-slate-300 pl-3 text-sm text-slate-700 leading-relaxed">
+                            <blockquote className="border-l-2 border-slate-200 pl-3 text-xs text-slate-600 leading-relaxed font-medium bg-slate-50/30 py-1.5 pr-1.5 rounded-r">
                               {displayText}
                             </blockquote>
                             {(chunk.text || "").trim().length > 180 &&
@@ -2278,9 +2382,9 @@ export default function TeachingMaterialEditor() {
                                       chunk.id,
                                     )
                                   }
-                                  className="mt-2 text-xs font-medium text-blue-600 hover:underline"
+                                  className="mt-2.5 text-[10px] font-bold text-blue-600 hover:text-blue-700 hover:underline transition"
                                 >
-                                  {expanded ? "Thu gọn" : "Expand"}
+                                  {expanded ? "Thu gọn" : "Xem thêm"}
                                 </button>
                               )}
                           </div>
@@ -2288,91 +2392,103 @@ export default function TeachingMaterialEditor() {
                       })
                     )
                   ) : !activeEvaluation ? (
-                    <div className="text-xs text-slate-500 bg-slate-50 border rounded-lg p-3">
-                      Chưa có đánh giá cho section này. Hãy bấm "Tạo nội dung"
-                      để hệ thống chấm điểm tự động.
+                    <div className="flex flex-col items-center justify-center text-center p-6 bg-slate-50/40 border border-dashed border-slate-200 rounded-xl animate-in fade-in duration-200 mt-2">
+                      <Sparkles size={24} className="text-slate-300 mb-2 animate-pulse" />
+                      <p className="text-xs font-semibold text-slate-500">Chưa có đánh giá chất lượng</p>
+                      <p className="text-[10px] text-slate-400 mt-1 max-w-[180px] leading-relaxed">
+                        AI sẽ phân tích và đánh giá chất lượng (độ chính xác, chi tiết, dễ hiểu) sau khi tạo nội dung.
+                      </p>
                     </div>
                   ) : (
                     <div className="space-y-4">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-800">
-                          📊 Đánh giá nội dung
+                      <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+                        <p className="text-xs font-bold text-slate-800 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                          <span>📊 Điểm số chất lượng</span>
                         </p>
-                        <div className="mt-2 space-y-1 text-sm">
-                          <div className="flex items-center justify-between">
-                            <span className="text-slate-600">
-                              Độ chính xác:
-                            </span>
-                            <span className="font-semibold text-slate-800">
-                              {formatScore10(activeEvaluation.scores.accuracy)}
-                              {" / 10"}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-slate-600">Độ đầy đủ:</span>
-                            <span className="font-semibold text-slate-800">
-                              {formatScore10(activeEvaluation.scores.coverage)}
-                              {" / 10"}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-slate-600">Cấu trúc:</span>
-                            <span className="font-semibold text-slate-800">
-                              {formatScore10(activeEvaluation.scores.structure)}
-                              {" / 10"}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-slate-600">Dễ hiểu:</span>
-                            <span className="font-semibold text-slate-800">
-                              {formatScore10(activeEvaluation.scores.clarity)}
-                              {" / 10"}
-                            </span>
-                          </div>
+                        <div className="space-y-3.5">
+                          {[
+                            { label: "Độ chính xác", score: activeEvaluation.scores.accuracy },
+                            { label: "Độ bao phủ", score: activeEvaluation.scores.coverage },
+                            { label: "Cấu trúc tổ chức", score: activeEvaluation.scores.structure },
+                            { label: "Độ dễ hiểu", score: activeEvaluation.scores.clarity },
+                          ].map((item) => (
+                            <div key={item.label} className="space-y-1">
+                              <div className="flex items-center justify-between text-xs font-medium">
+                                <span className="text-slate-500">{item.label}</span>
+                                <span className="font-bold text-slate-800">
+                                  {formatScore10(item.score)}/10
+                                </span>
+                              </div>
+                              <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                <div 
+                                  className={`h-full rounded-full transition-all duration-300 ${
+                                    item.score >= 8 
+                                      ? "bg-emerald-500" 
+                                      : item.score >= 6 
+                                        ? "bg-blue-500" 
+                                        : "bg-amber-500"
+                                  }`}
+                                  style={{ width: `${Math.min(100, item.score * 10)}%` }}
+                                />
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
 
-                      <div className="pt-2 border-t">
-                        <p className="text-sm font-semibold text-emerald-700">
-                          ✅ Điểm mạnh:
+                      <div className="bg-emerald-50/30 p-4 rounded-xl border border-emerald-100/50">
+                        <p className="text-xs font-bold text-emerald-800 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                          <CheckCircle2 size={13} className="text-emerald-600" />
+                          <span>Điểm mạnh:</span>
                         </p>
-                        <ul className="mt-1 space-y-1 text-sm text-slate-700">
+                        <ul className="space-y-1 text-xs text-slate-700 font-medium">
                           {(activeEvaluation.strengths || []).length > 0 ? (
                             activeEvaluation.strengths.map((item, idx) => (
-                              <li key={`strength-${idx}`}>- {item}</li>
+                              <li key={`strength-${idx}`} className="flex items-start gap-1.5">
+                                <span className="text-emerald-500 shrink-0 mt-0.5">•</span>
+                                <span>{item}</span>
+                              </li>
                             ))
                           ) : (
-                            <li>- Chưa có dữ liệu.</li>
+                            <li className="text-slate-400 italic">Chưa phát hiện điểm nổi bật</li>
                           )}
                         </ul>
                       </div>
 
-                      <div className="pt-2 border-t">
-                        <p className="text-sm font-semibold text-red-700">
-                          ❌ Điểm yếu:
+                      <div className="bg-rose-50/30 p-4 rounded-xl border border-rose-100/50">
+                        <p className="text-xs font-bold text-rose-800 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                          <span className="text-rose-600 font-bold">✕</span>
+                          <span>Hạn chế:</span>
                         </p>
-                        <ul className="mt-1 space-y-1 text-sm text-slate-700">
+                        <ul className="space-y-1 text-xs text-slate-700 font-medium">
                           {(activeEvaluation.weaknesses || []).length > 0 ? (
                             activeEvaluation.weaknesses.map((item, idx) => (
-                              <li key={`weakness-${idx}`}>- {item}</li>
+                              <li key={`weakness-${idx}`} className="flex items-start gap-1.5">
+                                <span className="text-rose-500 shrink-0 mt-0.5">•</span>
+                                <span>{item}</span>
+                              </li>
                             ))
                           ) : (
-                            <li>- Chưa có dữ liệu.</li>
+                            <li className="text-slate-400 italic">Không phát hiện điểm yếu nào</li>
                           )}
                         </ul>
                       </div>
 
-                      <div className="pt-2 border-t">
-                        <p className="text-sm font-semibold text-amber-700">
-                          💡 Gợi ý cải thiện:
+                      <div className="bg-amber-50/30 p-4 rounded-xl border border-amber-100/50">
+                        <p className="text-xs font-bold text-amber-800 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                          <Sparkles size={13} className="text-amber-600" />
+                          <span>Gợi ý cải thiện:</span>
                         </p>
-                        <ul className="mt-1 space-y-1 text-sm text-slate-700">
+                        <ul className="space-y-1 text-xs text-slate-700 font-medium">
                           {(activeEvaluation.suggestions || []).length > 0 ? (
                             activeEvaluation.suggestions.map((item, idx) => (
-                              <li key={`suggestion-${idx}`}>- {item}</li>
+                              <li key={`suggestion-${idx}`} className="flex items-start gap-1.5">
+                                <span className="text-amber-500 shrink-0 mt-0.5">•</span>
+                                <span>{item}</span>
+                              </li>
                             ))
                           ) : (
-                            <li>- Chưa có dữ liệu.</li>
+                            <li className="text-slate-400 italic">Giao diện đã tối ưu</li>
                           )}
                         </ul>
                       </div>

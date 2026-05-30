@@ -1,3 +1,6 @@
+import { useState, useEffect } from "react";
+import { type QuizItem } from "../services/api";
+
 /**
  * QuizCard — Premium dark-theme quiz question card.
  * Fully controlled: parent passes state, QuizCard emits events.
@@ -22,21 +25,15 @@ const TYPE_COLORS: Record<string, { bg: string; text: string; border: string }> 
 };
 
 export interface QuizCardProps {
-  item: {
-    id: string;
-    question: string;
-    options: string[];
-    correct_answer: string;
-    explanation: string;
-    type: string;
-    restudy_hint?: string;
-  };
+  item: QuizItem;
   index: number;
   userAnswer: string | undefined;
   submitted: boolean;
   expanded: boolean;
   onSelect: (questionId: string, letter: string) => void;
   onToggleExpand: (index: number) => void;
+  onUpdateItem?: (updatedItem: QuizItem) => void;
+  onDeleteItem?: (questionId: string) => void;
 }
 
 function getOptionLetter(option: string): string {
@@ -51,9 +48,88 @@ export function QuizCard({
   expanded,
   onSelect,
   onToggleExpand,
+  onUpdateItem,
+  onDeleteItem,
 }: QuizCardProps) {
   const isCorrect  = userAnswer === item.correct_answer;
   const typeColor  = TYPE_COLORS[item.type] ?? TYPE_COLORS.knowledge;
+
+  // Editing state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editQuestion, setEditQuestion] = useState(item.question);
+  const [editOptions, setEditOptions] = useState<string[]>(() =>
+    item.options.map((opt, idx) => {
+      const letter = ["A", "B", "C", "D"][idx];
+      const regex = new RegExp(`^[${letter}][.)\\s]+`, "i");
+      return opt.replace(regex, "").trim();
+    })
+  );
+  const [editCorrectAnswer, setEditCorrectAnswer] = useState(item.correct_answer);
+  const [editExplanation, setEditExplanation] = useState(item.explanation);
+  const [editType, setEditType] = useState(item.type);
+  const [editRestudyHint, setEditRestudyHint] = useState(item.restudy_hint || "");
+
+  // Reset internal states if item changes from parent
+  useEffect(() => {
+    setEditQuestion(item.question);
+    setEditOptions(
+      item.options.map((opt, idx) => {
+        const letter = ["A", "B", "C", "D"][idx];
+        const regex = new RegExp(`^[${letter}][.)\\s]+`, "i");
+        return opt.replace(regex, "").trim();
+      })
+    );
+    setEditCorrectAnswer(item.correct_answer);
+    setEditExplanation(item.explanation);
+    setEditType(item.type);
+    setEditRestudyHint(item.restudy_hint || "");
+  }, [item]);
+
+  const handleSave = () => {
+    if (!editQuestion.trim()) {
+      alert("Nội dung câu hỏi không được để trống.");
+      return;
+    }
+    if (editOptions.some((opt) => !opt.trim())) {
+      alert("Vui lòng điền đầy đủ nội dung cho tất cả 4 đáp án.");
+      return;
+    }
+
+    if (onUpdateItem) {
+      onUpdateItem({
+        ...item,
+        question: editQuestion.trim(),
+        options: [
+          `A. ${editOptions[0].trim()}`,
+          `B. ${editOptions[1].trim()}`,
+          `C. ${editOptions[2].trim()}`,
+          `D. ${editOptions[3].trim()}`,
+        ],
+        correct_answer: editCorrectAnswer,
+        explanation: editExplanation.trim(),
+        type: editType as any,
+        restudy_hint: editRestudyHint.trim(),
+      });
+    }
+    setIsEditing(false);
+  };
+
+  const handleCancel = () => {
+    // Reset to item values
+    setEditQuestion(item.question);
+    setEditOptions(
+      item.options.map((opt, idx) => {
+        const letter = ["A", "B", "C", "D"][idx];
+        const regex = new RegExp(`^[${letter}][.)\\s]+`, "i");
+        return opt.replace(regex, "").trim();
+      })
+    );
+    setEditCorrectAnswer(item.correct_answer);
+    setEditExplanation(item.explanation);
+    setEditType(item.type);
+    setEditRestudyHint(item.restudy_hint || "");
+    setIsEditing(false);
+  };
 
   // Dynamic card class
   let cardClass = "quiz-card";
@@ -62,8 +138,188 @@ export function QuizCard({
     else if (!isCorrect && userAnswer)  cardClass += " answered-wrong";
   }
 
+  // Edit Mode Render
+  if (isEditing) {
+    return (
+      <div id={`quiz-card-${item.id}`} className={cardClass} style={{ animationDelay: `${index * 0.04}s`, border: `2px solid ${ACCENT}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: ACCENT }}>
+            ✏️ Đang chỉnh sửa Câu {index + 1}
+          </span>
+          
+          <select
+            value={editType}
+            onChange={(e) => setEditType(e.target.value as any)}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 8,
+              border: "1px solid #cbd5e1",
+              fontSize: 13,
+              fontWeight: 600,
+              background: "#fff",
+              color: "#334155",
+            }}
+          >
+            <option value="knowledge">Nhận biết</option>
+            <option value="comprehension">Hiểu</option>
+            <option value="application">Áp dụng</option>
+            <option value="analysis">Phân tích</option>
+          </select>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: "block", marginBottom: 4, fontSize: 13, fontWeight: 600, color: "#475569" }}>
+            Nội dung câu hỏi:
+          </label>
+          <textarea
+            value={editQuestion}
+            onChange={(e) => setEditQuestion(e.target.value)}
+            style={{
+              width: "100%",
+              padding: "10px 12px",
+              borderRadius: 8,
+              border: "1px solid #cbd5e1",
+              fontSize: 14,
+              minHeight: 70,
+              fontFamily: "inherit",
+              resize: "vertical",
+              boxSizing: "border-box",
+            }}
+          />
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
+          <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#475569" }}>
+            Các lựa chọn đáp án (Click chữ cái tương ứng để đặt làm đáp án đúng):
+          </label>
+          {["A", "B", "C", "D"].map((letter, idx) => (
+            <div key={letter} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => setEditCorrectAnswer(letter)}
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 8,
+                  border: "none",
+                  background: editCorrectAnswer === letter ? GREEN : "rgba(0,0,0,0.06)",
+                  color: editCorrectAnswer === letter ? "#fff" : "#64748b",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 700,
+                  fontSize: 13,
+                  cursor: "pointer",
+                  transition: "background 0.2s, color 0.2s",
+                }}
+                title={`Chọn ${letter} làm đáp án đúng`}
+              >
+                {letter}
+              </button>
+              <input
+                type="text"
+                value={editOptions[idx] || ""}
+                onChange={(e) => {
+                  const newOpts = [...editOptions];
+                  newOpts[idx] = e.target.value;
+                  setEditOptions(newOpts);
+                }}
+                placeholder={`Lựa chọn ${letter}`}
+                style={{
+                  flex: 1,
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: "1px solid #cbd5e1",
+                  fontSize: 14,
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: "block", marginBottom: 4, fontSize: 13, fontWeight: 600, color: "#475569" }}>
+            Giải thích đáp án:
+          </label>
+          <textarea
+            value={editExplanation}
+            onChange={(e) => setEditExplanation(e.target.value)}
+            style={{
+              width: "100%",
+              padding: "10px 12px",
+              borderRadius: 8,
+              border: "1px solid #cbd5e1",
+              fontSize: 13,
+              minHeight: 50,
+              fontFamily: "inherit",
+              resize: "vertical",
+              boxSizing: "border-box",
+            }}
+          />
+        </div>
+
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: "block", marginBottom: 4, fontSize: 13, fontWeight: 600, color: "#475569" }}>
+            Gợi ý lộ trình ôn tập (nếu làm sai):
+          </label>
+          <input
+            type="text"
+            value={editRestudyHint}
+            onChange={(e) => setEditRestudyHint(e.target.value)}
+            placeholder="VD: Mục 2.3: Các loại bộ nhớ đệm"
+            style={{
+              width: "100%",
+              padding: "8px 12px",
+              borderRadius: 8,
+              border: "1px solid #cbd5e1",
+              fontSize: 13,
+              boxSizing: "border-box",
+            }}
+          />
+        </div>
+
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            onClick={handleCancel}
+            style={{
+              padding: "8px 16px",
+              borderRadius: 8,
+              border: "1px solid #cbd5e1",
+              background: "#fff",
+              cursor: "pointer",
+              fontSize: 13,
+              fontWeight: 600,
+              color: "#475569",
+            }}
+          >
+            Huỷ
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            style={{
+              padding: "8px 16px",
+              borderRadius: 8,
+              border: "none",
+              background: ACCENT,
+              color: "#fff",
+              cursor: "pointer",
+              fontSize: 13,
+              fontWeight: 600,
+            }}
+          >
+            Lưu thay đổi
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Normal Display Mode Render
   return (
-    <div className={cardClass} style={{ animationDelay: `${index * 0.04}s` }}>
+    <div id={`quiz-card-${item.id}`} className={cardClass} style={{ animationDelay: `${index * 0.04}s`, transition: 'box-shadow 0.5s ease-in-out' }}>
       {/* Card header: number badge + type badge + result icon */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -102,12 +358,67 @@ export function QuizCard({
           </span>
         </div>
 
-        {/* Result icon */}
-        {submitted && (
-          <span style={{ fontSize: 20 }}>
-            {isCorrect && userAnswer ? "✅" : userAnswer ? "❌" : "⬜"}
-          </span>
-        )}
+        {/* Action icons / Result icon */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {submitted && (
+            <span style={{ fontSize: 20 }}>
+              {isCorrect && userAnswer ? "✅" : userAnswer ? "❌" : "⬜"}
+            </span>
+          )}
+
+          {!submitted && (
+            <div style={{ display: "flex", gap: 6 }}>
+              <button
+                type="button"
+                onClick={() => setIsEditing(true)}
+                style={{
+                  background: "rgba(99,102,241,0.08)",
+                  border: "1px solid rgba(99,102,241,0.2)",
+                  color: ACCENT,
+                  padding: "4px 8px",
+                  borderRadius: 6,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 3,
+                  transition: "background 0.2s",
+                }}
+                title="Sửa câu hỏi này"
+              >
+                ✏️ Sửa
+              </button>
+              {onDeleteItem && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm(`Bạn có chắc chắn muốn xoá câu hỏi ${index + 1}?`)) {
+                      onDeleteItem(item.id);
+                    }
+                  }}
+                  style={{
+                    background: "rgba(239,68,68,0.08)",
+                    border: "1px solid rgba(239,68,68,0.2)",
+                    color: RED,
+                    padding: "4px 8px",
+                    borderRadius: 6,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 3,
+                    transition: "background 0.2s",
+                  }}
+                  title="Xoá câu hỏi này"
+                >
+                  🗑️ Xoá
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Question text */}
@@ -184,20 +495,20 @@ export function QuizCard({
             marginTop: 14,
             padding: "12px 16px",
             borderRadius: 8,
-            background: !isCorrect && userAnswer ? "rgba(251, 146, 60, 0.1)" : "rgba(255, 255, 255, 0.04)",
-            borderLeft: `4px solid ${!isCorrect && userAnswer ? "#fb923c" : "#a78bfa"}`,
+            background: !isCorrect && userAnswer ? "rgba(251, 146, 60, 0.1)" : "rgba(99, 102, 241, 0.08)",
+            borderLeft: `4px solid ${!isCorrect && userAnswer ? "#fb923c" : "#6366f1"}`,
             fontSize: 14,
             lineHeight: 1.6,
-            color: "#e2e8f0",
+            color: "#334155",
           }}
         >
           <div style={{ marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontWeight: 800, color: !isCorrect && userAnswer ? "#fb923c" : "#a78bfa", fontSize: 13, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            <span style={{ fontWeight: 800, color: !isCorrect && userAnswer ? "#ea580c" : "#4f46e5", fontSize: 13, textTransform: "uppercase", letterSpacing: "0.05em" }}>
               {!isCorrect && userAnswer ? "⚠️ Phân tích lỗi sai" : "💡 Giải thích kiến thức"}
             </span>
           </div>
 
-          <div style={{ color: "#cbd5e1" }}>
+          <div style={{ color: "#475569" }}>
             {item.explanation}
           </div>
 
@@ -208,14 +519,14 @@ export function QuizCard({
                 paddingTop: 10,
                 borderTop: "1px solid rgba(251, 146, 60, 0.2)",
                 fontSize: 13,
-                color: "#fdba74",
+                color: "#c2410c",
                 fontWeight: 600,
                 display: "flex",
                 alignItems: "center",
                 gap: 6,
               }}
             >
-              🚀 Lộ trình ôn tập: <span style={{ color: "#fff", textDecoration: "underline" }}>{item.restudy_hint}</span>
+              🚀 Lộ trình ôn tập: <span style={{ color: "#9a3412", textDecoration: "underline" }}>{item.restudy_hint}</span>
             </div>
           )}
 
@@ -247,3 +558,4 @@ export function QuizCard({
     </div>
   );
 }
+

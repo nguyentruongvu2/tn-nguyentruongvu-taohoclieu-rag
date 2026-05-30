@@ -341,6 +341,12 @@ export interface QuizItem {
   type: "knowledge" | "comprehension" | "application" | "analysis";
 }
 
+export interface AnalyzeContentResponse {
+  suggested_count: number;
+  complexity: string;
+  reasoning: string;
+}
+
 export interface GenerateQuizResponse {
   questions: QuizItem[];
   variation_seed: number;

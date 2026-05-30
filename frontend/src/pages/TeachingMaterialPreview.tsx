@@ -352,7 +352,7 @@ export default function TeachingMaterialPreview() {
             onClick={backToEditor}
             className="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-sm"
           >
-            Về soạn thảo
+            ← Quay lại
           </button>
         </div>
       </header>

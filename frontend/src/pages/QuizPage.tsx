@@ -3,6 +3,7 @@ import {
   generateQuiz,
   getQuizStats,
   saveQuizAttempt,
+  analyzeQuizContent,
   type QuizItem,
   type QuizStats,
 } from "../services/api";
@@ -28,6 +29,8 @@ interface QuizState {
   variationSeed?: number | null;
   answers?: UserAnswers;
   elapsed?: number;
+  submitted?: boolean;
+  score?: number;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -128,6 +131,73 @@ function exportToCsv(items: import("../services/api").QuizItem[]): string {
   return [header.join(","), ...rows].join("\n");
 }
 
+/**
+ * Export to Printable Text Format (.txt)
+ */
+function exportToPrintableTxt(items: import("../services/api").QuizItem[]): string {
+  const lines: string[] = [
+    "==================================================",
+    "                BÀI KIỂM TRA TRẮC NGHIỆM ĐỀ BẢN IN",
+    "==================================================",
+    "",
+    "Họ và tên:...................................................... Lớp:...................",
+    "Ngày làm bài:...../...../.........",
+    "",
+    "--------------------------------------------------",
+    "PHẦN I: ĐỀ BÀI (Chọn đáp án đúng nhất)",
+    "--------------------------------------------------",
+    "",
+  ];
+
+  items.forEach((item, idx) => {
+    lines.push(`Câu ${idx + 1}: ${item.question}`);
+    item.options.forEach((opt) => {
+      const letter = opt.match(/^([A-D])[.)]/i)?.[1]?.toUpperCase() ?? "";
+      const text = opt.replace(/^[A-D][.)\s]+/i, "").trim();
+      lines.push(`   ${letter}. ${text}`);
+    });
+    lines.push("");
+  });
+
+  lines.push("==================================================");
+  lines.push("               ĐÁP ÁN VÀ HƯỚNG DẪN GIẢI");
+  lines.push("==================================================");
+  lines.push("");
+
+  lines.push("BẢNG ĐÁP ÁN:");
+  const answerKeyRow: string[] = [];
+  items.forEach((item, idx) => {
+    answerKeyRow.push(`Câu ${idx + 1}: ${item.correct_answer}`);
+  });
+  for (let i = 0; i < answerKeyRow.length; i += 5) {
+    lines.push(answerKeyRow.slice(i, i + 5).join("   |   "));
+  }
+  lines.push("");
+  lines.push("CHI TIẾT GIẢI THÍCH:");
+  items.forEach((item, idx) => {
+    lines.push(`Câu ${idx + 1}: Đáp án đúng: ${item.correct_answer}`);
+    lines.push(`- Giải thích: ${item.explanation}`);
+    if (item.restudy_hint) {
+      lines.push(`- Gợi ý ôn tập: ${item.restudy_hint}`);
+    }
+    lines.push("");
+  });
+
+  return lines.join("\n");
+}
+
+function getNextIdNumber(existingItems: import("../services/api").QuizItem[]): number {
+  let max = 0;
+  existingItems.forEach((item) => {
+    const match = item.id.match(/^q(\d+)$/);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (num > max) max = num;
+    }
+  });
+  return max + 1;
+}
+
 // ── QuizPage ───────────────────────────────────────────────────────────────────
 
 export default function QuizPage() {
@@ -147,6 +217,14 @@ export default function QuizPage() {
   const [elapsed, setElapsed] = useState(0);
   const [filterErrors, setFilterErrors] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+
+  // Modal settings
+  const [showRegenModal, setShowRegenModal] = useState(false);
+  const [regenBloom, setRegenBloom] = useState("mix");
+  const [regenCustom, setRegenCustom] = useState("");
+  const [analyzing, setAnalyzing] = useState(false);
+  const [aiSuggestedNum, setAiSuggestedNum] = useState<number | null>(null);
+  const [aiAnalysisText, setAiAnalysisText] = useState("");
   const initCalledRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -173,6 +251,10 @@ export default function QuizPage() {
         setVariationSeed(state.variationSeed ?? null);
         if (state.answers) setAnswers(state.answers);
         if (state.elapsed) setElapsed(state.elapsed);
+        if (state.submitted) {
+          setSubmitted(true);
+          setScore(state.score || 0);
+        }
         setLoading(false);
         getQuizStats(state.projectId || undefined)
           .then(setStats)
@@ -180,35 +262,20 @@ export default function QuizPage() {
         return;
       }
 
-      // Otherwise, generate new questions
-      generateQuiz(state.lessonContent, state.numQuestions)
+      // Otherwise, instead of auto-generating, just enter setup mode
+      setLoading(false);
+      setShowRegenModal(true);
+      setAnalyzing(true);
+      analyzeQuizContent(state.lessonContent)
         .then((res) => {
-          const newItems = res.questions ?? [];
-          const newSeed = res.variation_seed ?? null;
-          setItems(newItems);
-          setVariationSeed(newSeed);
-          setLoading(false);
-
-          // Save back to localStorage to persist on reload
-          const newState = {
-            ...state,
-            items: newItems,
-            variationSeed: newSeed,
-          };
-          localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(newState));
-
-          getQuizStats(state.projectId || undefined)
-            .then(setStats)
-            .catch(() => {});
+          setAiSuggestedNum(res.suggested_count);
+          setNumQuestions(res.suggested_count);
+          setAiAnalysisText(`Độ khó: ${res.complexity}. ${res.reasoning}`);
         })
-        .catch((err) => {
-          setError(
-            err instanceof Error
-              ? err.message
-              : "Lỗi tạo quiz. Vui lòng thử lại.",
-          );
-          setLoading(false);
-        });
+        .catch(() => {
+          setAiAnalysisText("Lỗi phân tích nội dung.");
+        })
+        .finally(() => setAnalyzing(false));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Lỗi tải dữ liệu quiz.");
       setLoading(false);
@@ -271,12 +338,13 @@ export default function QuizPage() {
     setSubmitted(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
 
-    // Clear draft on submission
+    // Save submitted state
     const raw = localStorage.getItem(QUIZ_STORAGE_KEY);
     if (raw) {
       const state = JSON.parse(raw);
-      delete state.answers;
-      delete state.elapsed;
+      state.submitted = true;
+      state.score = correct;
+      state.elapsed = elapsed;
       localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(state));
     }
 
@@ -315,21 +383,87 @@ export default function QuizPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const handleRegenerate = () => {
+  const handleUpdateItem = (updatedItem: QuizItem) => {
+    const newItems = items.map((q) => (q.id === updatedItem.id ? updatedItem : q));
+    setItems(newItems);
+    
+    // Save to localStorage
+    const raw = localStorage.getItem(QUIZ_STORAGE_KEY);
+    if (raw) {
+      const state = JSON.parse(raw);
+      localStorage.setItem(
+        QUIZ_STORAGE_KEY,
+        JSON.stringify({
+          ...state,
+          items: newItems,
+        }),
+      );
+    }
+  };
+
+  const handleDeleteItem = (questionId: string) => {
+    const newItems = items.filter((q) => q.id !== questionId);
+    setItems(newItems);
+    
+    // Remove the answer to this question if any
+    const newAnswers = { ...answers };
+    delete newAnswers[questionId];
+    setAnswers(newAnswers);
+
+    // Save to localStorage
+    const raw = localStorage.getItem(QUIZ_STORAGE_KEY);
+    if (raw) {
+      const state = JSON.parse(raw);
+      localStorage.setItem(
+        QUIZ_STORAGE_KEY,
+        JSON.stringify({
+          ...state,
+          items: newItems,
+          answers: newAnswers,
+        }),
+      );
+    }
+  };
+
+  const handleRegenerate = (n: number, bloom: string, custom: string, mode: "replace" | "append" = "replace") => {
     if (!lessonContent) return;
     const newSeed = Math.floor(Math.random() * 10000);
-    setAnswers({});
-    setSubmitted(false);
-    setScore(0);
-    setSavedId(null);
-    setElapsed(0);
-    setFilterErrors(false);
+    const nextIdStart = getNextIdNumber(items);
+    
     setLoading(true);
     setError("");
-    generateQuiz(lessonContent, numQuestions, newSeed)
+    setShowRegenModal(false);
+    
+    generateQuiz(lessonContent, n, newSeed, bloom, custom)
       .then((res) => {
-        const newItems = res.questions ?? [];
+        const generatedQuestions = res.questions ?? [];
+        
+        let newItems: QuizItem[];
+        let newAnswers: UserAnswers;
+        if (mode === "append") {
+          const mappedQuestions = generatedQuestions.map((q, idx) => ({
+            ...q,
+            id: `q${nextIdStart + idx}`
+          }));
+          newItems = [...items, ...mappedQuestions];
+          newAnswers = { ...answers };
+          setSubmitted(false);
+          setScore(0);
+          setSavedId(null);
+          setFilterErrors(false);
+        } else {
+          newItems = generatedQuestions;
+          newAnswers = {};
+          setAnswers({});
+          setSubmitted(false);
+          setScore(0);
+          setSavedId(null);
+          setElapsed(0);
+          setFilterErrors(false);
+        }
+        
         setItems(newItems);
+        setNumQuestions(n);
         setVariationSeed(res.variation_seed ?? newSeed);
         setLoading(false);
 
@@ -341,9 +475,13 @@ export default function QuizPage() {
             QUIZ_STORAGE_KEY,
             JSON.stringify({
               ...state,
-              numQuestions,
+              numQuestions: n,
               items: newItems,
               variationSeed: res.variation_seed ?? newSeed,
+              answers: newAnswers,
+              submitted: false,
+              score: 0,
+              elapsed: mode === "append" ? elapsed : 0,
             }),
           );
         }
@@ -393,7 +531,7 @@ export default function QuizPage() {
           <div className="qp-error" style={{ maxWidth: 440 }}>
             <p style={{ margin: 0, color: "#fca5a5", fontWeight: 600 }}>{error}</p>
             <button className="qp-btn-primary" onClick={handleBack}>
-              ← Quay lại bài giảng
+              ← Quay lại
             </button>
           </div>
         </div>
@@ -419,26 +557,10 @@ export default function QuizPage() {
         </div>
 
         <div className="qp-header-right">
-          {/* Num questions selector — only when not submitted */}
-          {!submitted && (
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#64748b" }}>
-              Câu:
-              <select
-                className="qp-num-select"
-                value={numQuestions}
-                onChange={(e) => setNumQuestions(+e.target.value)}
-                title="Số câu hỏi khi tạo lại"
-              >
-                {[5, 10, 15, 20].map((n) => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-            </label>
-          )}
           <button
             className="qp-regen-btn"
-            onClick={handleRegenerate}
-            title={`Tạo bộ ${numQuestions} câu hỏi mới`}
+            onClick={() => setShowRegenModal(true)}
+            title="Tạo bộ câu hỏi mới"
           >
             🔀 Câu hỏi mới
           </button>
@@ -448,7 +570,7 @@ export default function QuizPage() {
             <div style={{ position: "relative" }}>
               <button
                 className="qp-regen-btn"
-                style={{ background: "#0f766e", borderColor: "#0d9488" }}
+                style={{ background: "#0f766e", borderColor: "#0d9488", color: "#ffffff" }}
                 onClick={() => setShowExportMenu((v) => !v)}
                 title="Xuất câu hỏi ra file để dùng trên LMS"
               >
@@ -475,7 +597,7 @@ export default function QuizPage() {
                   </p>
                   <button
                     className="qp-regen-btn"
-                    style={{ display: "block", width: "100%", textAlign: "left", marginBottom: 4, background: "#164e63" }}
+                    style={{ display: "block", width: "100%", textAlign: "left", marginBottom: 4, background: "#164e63", color: "#ffffff" }}
                     onClick={() => {
                       downloadTextFile(exportToGift(items), "quiz_moodle_gift.txt");
                       setShowExportMenu(false);
@@ -485,7 +607,8 @@ export default function QuizPage() {
                   </button>
                   <button
                     className="qp-regen-btn"
-                    style={{ display: "block", width: "100%", textAlign: "left", marginBottom: 4, background: "#1e3a8a" }}
+                    style={{ display: "block", width: "100%", textAlign: "left", marginBottom: 4, background: "#1e3a8a", color: "#ffffff" }}
+
                     onClick={() => {
                       downloadTextFile(exportToAiken(items), "quiz_moodle_aiken.txt");
                       setShowExportMenu(false);
@@ -495,13 +618,23 @@ export default function QuizPage() {
                   </button>
                   <button
                     className="qp-regen-btn"
-                    style={{ display: "block", width: "100%", textAlign: "left", background: "#14532d" }}
+                    style={{ display: "block", width: "100%", textAlign: "left", marginBottom: 4, background: "#14532d", color: "#ffffff" }}
                     onClick={() => {
                       downloadTextFile(exportToCsv(items), "quiz_kahoot.csv", "text/csv;charset=utf-8");
                       setShowExportMenu(false);
                     }}
                   >
                     🎮 CSV (.csv) — Kahoot / Quizizz
+                  </button>
+                  <button
+                    className="qp-regen-btn"
+                    style={{ display: "block", width: "100%", textAlign: "left", background: "#4f46e5", color: "#ffffff" }}
+                    onClick={() => {
+                      downloadTextFile(exportToPrintableTxt(items), "de_thi_ban_in.txt");
+                      setShowExportMenu(false);
+                    }}
+                  >
+                    🖨️ Bản in (.txt) — Thi viết/Tự học
                   </button>
                 </div>
               )}
@@ -567,6 +700,8 @@ export default function QuizPage() {
               expanded={activeCard === idx}
               onSelect={handleSelect}
               onToggleExpand={(i) => setActiveCard(activeCard === i ? null : i)}
+              onUpdateItem={handleUpdateItem}
+              onDeleteItem={handleDeleteItem}
             />
           </div>
         ))}
@@ -601,6 +736,116 @@ export default function QuizPage() {
           </button>
         </div>
       )}
+      {/* Regen Modal */}
+      {showRegenModal && (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", width: "100%", maxWidth: "400px", boxShadow: "0 20px 40px rgba(0,0,0,0.2)" }}>
+            <h2 style={{ margin: "0 0 16px 0", fontSize: 20 }}>{items.length === 0 ? "Cấu hình Quiz" : "Tạo Quiz mới"}</h2>
+            
+            {analyzing ? (
+              <div style={{ marginBottom: 16, padding: "12px", background: "#f8fafc", borderRadius: "8px", display: "flex", gap: "8px", alignItems: "center" }}>
+                <div className="qp-spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
+                <span style={{ fontSize: 13, color: "#64748b" }}>AI đang phân tích bài giảng...</span>
+              </div>
+            ) : aiAnalysisText ? (
+              <div style={{ marginBottom: 16, padding: "12px", background: "#f0fdf4", borderRadius: "8px", border: "1px solid #bbf7d0" }}>
+                <span style={{ fontSize: 13, color: "#166534", lineHeight: 1.5 }}>
+                  <strong style={{ color: "#15803d" }}>🤖 Phân tích:</strong> {aiAnalysisText}
+                </span>
+              </div>
+            ) : null}
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: "block", marginBottom: 8, fontSize: 14, fontWeight: 600 }}>Số lượng câu hỏi (tối đa 20)</label>
+              <select 
+                value={numQuestions} 
+                onChange={e => setNumQuestions(Number(e.target.value))}
+                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                disabled={analyzing}
+              >
+                {Array.from(new Set([3, 5, 7, 10, 15, 20, aiSuggestedNum].filter((n): n is number => n !== null))).sort((a, b) => a - b).map(n => (
+                  <option key={n} value={n}>
+                    {n} câu {n === aiSuggestedNum ? " (🤖 AI đề xuất)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: "block", marginBottom: 8, fontSize: 14, fontWeight: 600 }}>Mức độ Bloom</label>
+              <select 
+                value={regenBloom} 
+                onChange={e => setRegenBloom(e.target.value)}
+                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+              >
+                <option value="mix">Trộn lẫn (Khuyên dùng)</option>
+                <option value="knowledge">Chỉ Nhận biết</option>
+                <option value="comprehension">Chỉ Hiểu</option>
+                <option value="application">Chỉ Áp dụng</option>
+                <option value="analysis">Chỉ Phân tích</option>
+              </select>
+            </div>
+            
+            <div style={{ marginBottom: 24 }}>
+              <label style={{ display: "block", marginBottom: 8, fontSize: 14, fontWeight: 600 }}>Yêu cầu thêm (tuỳ chọn)</label>
+              <textarea 
+                value={regenCustom} 
+                onChange={e => setRegenCustom(e.target.value)}
+                placeholder="VD: Tập trung vào chương 2, độ khó cao..."
+                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", minHeight: "80px", resize: "none" }}
+              />
+            </div>
+            
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {items.length === 0 ? (
+                <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+                  <button 
+                    onClick={() => { setShowRegenModal(false); handleBack(); }}
+                    style={{ padding: "8px 16px", borderRadius: "6px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontWeight: 600, color: "#475569" }}
+                  >
+                    Quay lại
+                  </button>
+                  <button 
+                    onClick={() => handleRegenerate(numQuestions, regenBloom, regenCustom, "replace")}
+                    style={{ padding: "8px 16px", borderRadius: "6px", border: "none", background: "#4f46e5", cursor: "pointer", fontWeight: 600, color: "#fff" }}
+                    disabled={analyzing}
+                  >
+                    ✨ Bắt đầu tạo Quiz
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+                    <button 
+                      onClick={() => setShowRegenModal(false)}
+                      style={{ padding: "8px 16px", borderRadius: "6px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontWeight: 600, color: "#475569" }}
+                    >
+                      Huỷ
+                    </button>
+                    <button 
+                      onClick={() => handleRegenerate(numQuestions, regenBloom, regenCustom, "replace")}
+                      style={{ padding: "8px 16px", borderRadius: "6px", border: "none", background: "#ef4444", cursor: "pointer", fontWeight: 600, color: "#fff" }}
+                      title="Xoá tất cả câu hỏi hiện tại và tạo bộ mới"
+                      disabled={analyzing}
+                    >
+                      Tạo mới (Thay thế)
+                    </button>
+                  </div>
+                  <button 
+                    onClick={() => handleRegenerate(numQuestions, regenBloom, regenCustom, "append")}
+                    style={{ padding: "8px 16px", borderRadius: "6px", border: "none", background: "#10b981", cursor: "pointer", fontWeight: 600, color: "#fff", width: "100%" }}
+                    title="Giữ nguyên các câu hỏi hiện tại, chỉ tạo thêm câu hỏi mới gộp vào"
+                    disabled={analyzing}
+                  >
+                    ➕ Tạo thêm & Gộp vào ({items.length} câu hiện có)
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

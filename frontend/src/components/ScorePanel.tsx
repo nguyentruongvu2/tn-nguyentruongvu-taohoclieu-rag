@@ -42,7 +42,7 @@ function CircleScore({ pct, color }: { pct: number; color: string }) {
   const dash = (pct / 100) * circ;
   return (
     <svg width={136} height={136} style={{ transform: "rotate(-90deg)", filter: `drop-shadow(0 0 12px ${color}55)` }}>
-      <circle cx={68} cy={68} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={11} />
+      <circle cx={68} cy={68} r={r} fill="none" stroke="#f1f5f9" strokeWidth={11} />
       <circle cx={68} cy={68} r={r} fill="none" stroke={color} strokeWidth={11}
         strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
         style={{ transition: "stroke-dasharray 1s cubic-bezier(.4,0,.2,1)" }} />
@@ -62,48 +62,74 @@ export function ScorePanel({ score, total, elapsed, savedId, stats, items, userA
   const pct      = total > 0 ? Math.round((score / total) * 100) : 0;
   const feedback = getFeedback(pct);
 
+  // Group incorrect answers by restudy hint
+  const missedItems = items.filter((item) => userAnswers[item.id] !== item.correct_answer);
+  const groupedMisses: Record<string, typeof missedItems> = {};
+  missedItems.forEach(item => {
+    let hint = item.restudy_hint || "Kiến thức tổng hợp";
+    if (hint.startsWith("Mục:")) {
+      hint = hint.replace("Mục:", "").trim();
+    }
+    if (!groupedMisses[hint]) groupedMisses[hint] = [];
+    groupedMisses[hint].push(item);
+  });
+
+  const getAdviceForType = (type: string) => {
+    switch (type) {
+      case "knowledge": return "Ôn lại định nghĩa và các khái niệm cốt lõi.";
+      case "comprehension": return "Đọc kỹ lại phần giải thích để tránh nhầm lẫn bản chất.";
+      case "application": return "Xem lại các ví dụ thực tế trong bài học để biết cách vận dụng.";
+      case "analysis": return "Suy luận chậm lại, phân tách vấn đề để tìm nguyên nhân.";
+      default: return "Cần xem lại nội dung này trong bài giảng.";
+    }
+  };
+
   return (
     <div className="qp-score-panel">
-      <CircleScore pct={pct} color={feedback.color} />
-
-      <div className="qp-score-title" style={{ color: feedback.color }}>
-        {feedback.emoji} {score}/{total} câu đúng
-      </div>
-      <p className="qp-score-subtitle">{feedback.text}</p>
-
-      {/* Quick stats */}
-      <div className="qp-stats-row">
-        <div className="qp-stat-card">
-          <div className="qp-stat-value" style={{ color: feedback.color }}>{pct}%</div>
-          <div className="qp-stat-label">điểm</div>
-        </div>
-        <div className="qp-stat-card">
-          <div className="qp-stat-value">{score}</div>
-          <div className="qp-stat-label">câu đúng</div>
-        </div>
-        <div className="qp-stat-card">
-          <div className="qp-stat-value">{total - score}</div>
-          <div className="qp-stat-label">câu sai</div>
-        </div>
-        {elapsed > 0 && (
-          <div className="qp-stat-card">
-            <div className="qp-stat-value" style={{ fontSize: 18 }}>{formatTime(elapsed)}</div>
-            <div className="qp-stat-label">thời gian</div>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "center", gap: 32, marginBottom: 20 }}>
+        <CircleScore pct={pct} color={feedback.color} />
+        
+        <div style={{ textAlign: "left", flex: "1 1 300px" }}>
+          <div className="qp-score-title" style={{ color: feedback.color, margin: "0 0 8px" }}>
+            {feedback.emoji} {score}/{total} câu đúng
           </div>
-        )}
+          <p className="qp-score-subtitle" style={{ margin: "0 0 20px" }}>{feedback.text}</p>
+
+          {/* Quick stats */}
+          <div className="qp-stats-row" style={{ margin: 0, justifyContent: "flex-start", gap: 12 }}>
+            <div className="qp-stat-card" style={{ flex: "1 1 100px", padding: "16px 12px", background: "rgba(241, 245, 249, 0.5)", border: "1px solid rgba(226, 232, 240, 0.8)" }}>
+              <div className="qp-stat-value" style={{ color: feedback.color, fontSize: 26 }}>{pct}%</div>
+              <div className="qp-stat-label" style={{ fontSize: 12, fontWeight: 600 }}>Điểm số</div>
+            </div>
+            <div className="qp-stat-card" style={{ flex: "1 1 80px", padding: "16px 12px", background: "rgba(241, 245, 249, 0.5)", border: "1px solid rgba(226, 232, 240, 0.8)" }}>
+              <div className="qp-stat-value" style={{ color: "#3b82f6", fontSize: 22 }}>{score}</div>
+              <div className="qp-stat-label" style={{ fontSize: 11, fontWeight: 500 }}>Câu đúng</div>
+            </div>
+            <div className="qp-stat-card" style={{ flex: "1 1 80px", padding: "16px 12px", background: "rgba(241, 245, 249, 0.5)", border: "1px solid rgba(226, 232, 240, 0.8)" }}>
+              <div className="qp-stat-value" style={{ color: "#ef4444", fontSize: 22 }}>{total - score}</div>
+              <div className="qp-stat-label" style={{ fontSize: 11, fontWeight: 500 }}>Câu sai</div>
+            </div>
+            {elapsed > 0 && (
+              <div className="qp-stat-card" style={{ flex: "1 1 80px", padding: "16px 12px", background: "rgba(241, 245, 249, 0.5)", border: "1px solid rgba(226, 232, 240, 0.8)" }}>
+                <div className="qp-stat-value" style={{ fontSize: 20, color: "#64748b" }}>{formatTime(elapsed)}</div>
+                <div className="qp-stat-label" style={{ fontSize: 11, fontWeight: 500 }}>Thời gian</div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Historical stats */}
       {stats && stats.attempts > 0 && (
         <div className="qp-stats-row" style={{ marginTop: 10 }}>
           {[
-            { value: stats.attempts,                             label: "lần làm" },
+            { value: stats.attempts,                             label: "Lần làm" },
             { value: `${stats.avg_percentage?.toFixed(0)}%`,    label: "TB lịch sử" },
-            { value: `${stats.best_percentage?.toFixed(0)}%`,   label: "cao nhất" },
+            { value: `${stats.best_percentage?.toFixed(0)}%`,   label: "Cao nhất" },
           ].map(({ value, label }) => (
-            <div key={label} className="qp-stat-card" style={{ borderColor: "rgba(99,102,241,0.2)" }}>
-              <span className="qp-stat-value" style={{ color: ACCENT }}>{value}</span>
-              <span className="qp-stat-label">{label}</span>
+            <div key={label} className="qp-stat-card" style={{ padding: "12px 20px", borderColor: "rgba(99,102,241,0.2)", background: "rgba(99,102,241,0.03)" }}>
+              <div className="qp-stat-value" style={{ color: ACCENT, fontSize: 22 }}>{value}</div>
+              <div className="qp-stat-label" style={{ fontSize: 11 }}>{label}</div>
             </div>
           ))}
         </div>
@@ -134,26 +160,52 @@ export function ScorePanel({ score, total, elapsed, savedId, stats, items, userA
             Hệ thống nhận thấy bạn đang gặp khó khăn ở các nội dung sau:
           </p>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {items
-              .filter((item) => userAnswers[item.id] !== item.correct_answer)
-              .map((item, i) => (
-                <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                  <span style={{ fontSize: 12, marginTop: 2 }}>🔴</span>
-                  <div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#1e293b" }}>
-                      {item.restudy_hint || "Kiến thức tổng hợp"}
-                    </div>
-                    <div style={{ fontSize: 11, color: "#94a3b8", textTransform: "uppercase", fontWeight: 600 }}>
-                      Kỹ năng: {item.type === "knowledge" ? "Nhận biết" : item.type === "comprehension" ? "Hiểu" : item.type === "application" ? "Áp dụng" : "Phân tích"}
-                    </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {Object.entries(groupedMisses).map(([hint, itemsGrp], i) => (
+              <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", background: "#ffffff", padding: "12px", borderRadius: "8px", border: "1px solid rgba(239, 68, 68, 0.1)" }}>
+                <span style={{ fontSize: 14, marginTop: 2 }}>🔴</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#1e293b", marginBottom: 6 }}>
+                    Mục: {hint}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {itemsGrp.map(item => (
+                      <div 
+                        key={item.id} 
+                        style={{ fontSize: 13, background: "rgba(241, 245, 249, 0.6)", padding: "8px", borderRadius: "6px", cursor: "pointer", transition: "all 0.2s" }}
+                        onClick={() => {
+                          const el = document.getElementById(`quiz-card-${item.id}`);
+                          if (el) {
+                            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            el.style.boxShadow = '0 0 0 4px #fb923c, 0 8px 32px rgba(251,146,60,0.4)';
+                            setTimeout(() => {
+                              el.style.boxShadow = '';
+                            }, 2500);
+                          }
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(226, 232, 240, 0.8)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(241, 245, 249, 0.6)"; }}
+                        title="Cuộn tới câu hỏi này"
+                      >
+                        <div style={{ color: "#64748b", fontWeight: 500, marginBottom: 4 }}>
+                          <span style={{ fontSize: 11, color: "#94a3b8", textTransform: "uppercase", fontWeight: 700, marginRight: 6 }}>
+                            [{item.type === "knowledge" ? "Nhận biết" : item.type === "comprehension" ? "Hiểu" : item.type === "application" ? "Áp dụng" : "Phân tích"}]
+                          </span>
+                          {item.question.length > 80 ? item.question.substring(0, 80) + "..." : item.question}
+                        </div>
+                        <div style={{ color: "#b45309", fontWeight: 500, fontStyle: "italic", fontSize: 12 }}>
+                          👉 {getAdviceForType(item.type)}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              ))}
+              </div>
+            ))}
           </div>
 
-          <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px dashed rgba(0,0,0,0.1)", fontSize: 12, color: "#475569", fontStyle: "italic" }}>
-            💡 Lời khuyên: Hãy cuộn xuống dưới xem kỹ phần giải thích lỗi sai hoặc quay lại đọc mục tương ứng trong bài giảng trước khi làm lại.
+          <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px dashed rgba(0,0,0,0.1)", fontSize: 12, color: "#475569" }}>
+            💡 <span style={{ fontWeight: 600 }}>Tip:</span> Hãy cuộn xuống dưới xem kỹ phần giải thích lỗi sai của từng câu, sau đó quay lại đọc mục tương ứng trong bài giảng trước khi làm lại.
           </div>
         </div>
       )}
@@ -163,7 +215,7 @@ export function ScorePanel({ score, total, elapsed, savedId, stats, items, userA
           🔄 Làm lại
         </button>
         <button className="qp-btn-ghost" onClick={onBack}>
-          ← Quay lại bài giảng
+          ← Quay lại
         </button>
       </div>
     </div>
