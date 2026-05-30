@@ -1,0 +1,43 @@
+name: Deploy Backend to VPS
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'backend/**'
+      - 'docker-compose.prod.yml'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch: # Cho phép chạy thủ công từ GitHub UI
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || '22' }}
+          script: |
+            # Di chuyển vào thư mục dự án trên VPS
+            # Yêu cầu thư mục này đã tồn tại và đã được clone repository về VPS
+            cd /opt/AI_RAG_Project || exit 1
+            
+            # Kéo code mới nhất từ nhánh main
+            git pull origin main
+            
+            # Đảm bảo file .env tồn tại (nếu cần thiết có thể thêm logic tạo file .env từ secrets)
+            # cp .env.example backend/.env (hoặc cấu hình thông qua docker-compose)
+            
+            # Khởi động lại các container Backend bằng file prod
+            # Tham số --build sẽ bắt Docker build lại image mới nếu có thay đổi trong Dockerfile
+            docker compose -f docker-compose.prod.yml up -d --build backend
+            
+            # Xóa các Docker image không còn sử dụng để giải phóng dung lượng ổ cứng
+            docker image prune -f

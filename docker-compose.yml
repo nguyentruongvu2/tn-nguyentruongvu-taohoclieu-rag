@@ -1,16 +1,5 @@
 services:
-  # ── Redis Cache ────────────────────────────────────────────────────────────
-  redis:
-    image: redis:7-alpine
-    container_name: rag-redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+
 
   # ── PostgreSQL Database ────────────────────────────────────────────────────
   db:
@@ -59,11 +48,9 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-rag_teaching_material}
       - POSTGRES_USER=${POSTGRES_USER:-rag_user}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-rag_secure_password_2024}
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://localhost:6379/0
     depends_on:
       db:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
