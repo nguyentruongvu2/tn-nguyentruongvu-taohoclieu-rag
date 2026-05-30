@@ -3,12 +3,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install minimal system dependencies only
+# Install minimal system dependencies and Redis
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-vie \
     libgl1 \
     libglib2.0-0 \
+    redis-server \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better layer caching
@@ -30,6 +31,9 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')" || exit 1
 
-# Run application with Gunicorn for production
-# Fallback to 4 workers. You can override WEB_CONCURRENCY in docker-compose
-CMD ["gunicorn", "app.main:app", "--workers", "4", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000"]
+# Copy and prepare startup script
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
+# Run application with the combined script
+CMD ["/app/start.sh"]

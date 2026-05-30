@@ -29,10 +29,20 @@ router = APIRouter(prefix="/quiz", tags=["quiz"])
 
 # ── Models ────────────────────────────────────────────────────────────────────
 
+class AnalyzeContentRequest(BaseModel):
+    lesson_content: str = Field(..., min_length=10)
+
+class AnalyzeContentResponse(BaseModel):
+    suggested_count: int
+    complexity: str
+    reasoning: str
+
 class GenerateQuizRequest(BaseModel):
     lesson_content: str = Field(..., min_length=20)
     num_questions: int = Field(default=5, ge=1, le=20)
     variation_seed: int | None = Field(default=None)
+    bloom_level: str | None = Field(default="mix")
+    custom_instruction: str | None = Field(default="")
 
 
 class QuizQuestion(BaseModel):
@@ -92,11 +102,15 @@ LESSON CONTENT:
 """
 
 
-def _build_prompt(content: str, n: int, seed: int) -> str:
+def _build_prompt(content: str, n: int, seed: int, bloom_level: str = "mix", custom_instruction: str = "") -> str:
     type_keys = list(_Q_TYPES.keys())
-    assigned = [type_keys[i % len(type_keys)] for i in range(n)]
-    rng = random.Random(seed)
-    rng.shuffle(assigned)
+    
+    if bloom_level and bloom_level.lower() in type_keys:
+        assigned = [bloom_level.lower()] * n
+    else:
+        assigned = [type_keys[i % len(type_keys)] for i in range(n)]
+        rng = random.Random(seed)
+        rng.shuffle(assigned)
 
     counts: dict[str, int] = {}
     for t in assigned:
@@ -104,18 +118,20 @@ def _build_prompt(content: str, n: int, seed: int) -> str:
 
     type_list = "\n".join(
         f"  [{t.upper()} x{counts.get(t, 0)}] {desc}"
-        for t, desc in _Q_TYPES.items()
+        for t, desc in _Q_TYPES.items() if counts.get(t, 0) > 0
     )
 
     # Scale content: more questions = more context, but cap waste
     max_chars = min(2500 + n * 350, 6000)
+    
+    custom_rule = f"\n- CUSTOM USER INSTRUCTION (CRITICAL): {custom_instruction}\n" if custom_instruction else ""
 
     return _PROMPT_TEMPLATE.format(
         n=n,
         seed=seed,
         type_list=type_list,
         content=content[:max_chars].strip(),
-    )
+    ) + custom_rule
 
 
 # ── JSON helpers ──────────────────────────────────────────────────────────────
@@ -160,8 +176,8 @@ def _call_llm_sync(prompt: str, n: int) -> str:
     return raw_text
 
 
-async def _call_llm(lesson_content: str, num_questions: int, seed: int) -> list[dict]:
-    prompt = _build_prompt(lesson_content, num_questions, seed)
+async def _call_llm(lesson_content: str, num_questions: int, seed: int, bloom_level: str = "mix", custom_instruction: str = "") -> list[dict]:
+    prompt = _build_prompt(lesson_content, num_questions, seed, bloom_level, custom_instruction)
     # Run blocking LLM I/O in thread pool — frees event loop for other requests
     raw_text = await asyncio.to_thread(_call_llm_sync, prompt, num_questions)
     parsed = _extract_json(raw_text)
@@ -173,13 +189,62 @@ async def _call_llm(lesson_content: str, num_questions: int, seed: int) -> list[
 
 # ── Endpoint ──────────────────────────────────────────────────────────────────
 
+def _call_llm_analyze_sync(content: str) -> str:
+    prompt = f"""\
+You are an expert educational content analyzer.
+Analyze the following lesson content to suggest the optimal number of multiple-choice questions for a quiz.
+Consider:
+1. The number of distinct core concepts.
+2. The complexity of the material.
+Usually, 1-2 questions per core concept is ideal. Max 20 questions. Min 3 questions.
+
+OUTPUT FORMAT: Return ONLY valid JSON in this exact structure, no markdown, no extra text:
+{{"suggested_count": 8, "complexity": "Medium", "reasoning": "Tài liệu chứa 4 khái niệm chính..."}}
+
+LESSON CONTENT:
+{content[:6000]}
+"""
+    raw_text, _ = rag_pipeline._generate_content_with_failover(
+        prompt,
+        temperature=0.3,
+        max_output_tokens=400,
+    )
+    return raw_text
+
+@router.post("/analyze-content", response_model=AnalyzeContentResponse)
+async def analyze_content(body: AnalyzeContentRequest):
+    """Analyze lesson content to suggest quiz configuration."""
+    try:
+        raw_text = await asyncio.to_thread(_call_llm_analyze_sync, body.lesson_content)
+        parsed = _extract_json(raw_text)
+        return AnalyzeContentResponse(
+            suggested_count=max(3, min(20, int(parsed.get("suggested_count", 5)))),
+            complexity=str(parsed.get("complexity", "Medium")),
+            reasoning=str(parsed.get("reasoning", ""))
+        )
+    except Exception as exc:
+        logger.error("Quiz analysis failed: %s", exc)
+        word_count = len(body.lesson_content.split())
+        suggested = max(3, min(20, int(word_count / 100)))
+        return AnalyzeContentResponse(
+            suggested_count=suggested,
+            complexity="Unknown",
+            reasoning="Phân tích dựa trên độ dài (tính năng AI đang bận)."
+        )
+
 @router.post("/generate-quiz", response_model=GenerateQuizResponse)
 async def generate_quiz(body: GenerateQuizRequest):
     """Generate diverse academic MCQ quiz using Gemini (non-blocking)."""
     seed = body.variation_seed if body.variation_seed is not None else int(time.time()) % 10000
 
     try:
-        raw_questions = await _call_llm(body.lesson_content, body.num_questions, seed)
+        raw_questions = await _call_llm(
+            body.lesson_content, 
+            body.num_questions, 
+            seed,
+            body.bloom_level,
+            body.custom_instruction
+        )
     except Exception as exc:
         logger.error("Quiz LLM failed (seed=%d): %s", seed, exc, exc_info=True)
         raise HTTPException(status_code=502, detail=MSG.quiz.llm_failed)
