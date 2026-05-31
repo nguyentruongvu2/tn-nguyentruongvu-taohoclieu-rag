@@ -5,9 +5,20 @@ import {
   downloadPptx,
   generateSlideOutline,
   saveSlidesDraft,
-  uploadTemplate,
+  loadSlidesDraft,
   type SlideItem,
 } from "../services/api";
+import {
+  Sparkles,
+  PanelRight,
+  Layout,
+  FileText,
+  Clock,
+  Copy,
+  ArrowUp,
+  ArrowDown,
+  Trash2,
+} from "lucide-react";
 import "./SlidePage.css";
 import { SlideCanvas, type SlideLayout } from "../components/SlideCanvas";
 
@@ -321,15 +332,14 @@ export default function SlidePage({
   const [isCloudSaving, setIsCloudSaving] = useState(false);
   const cloudSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [templatePath, setTemplatePath] = useState<string>("");
-  const [templateName, setTemplateName] = useState<string>("");
-  const [isUploading, setIsUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+
 
   // Inline edit state
   const [editTitle, setEditTitle] = useState(false);
   const [editBullet, setEditBullet] = useState<number | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showRightPanel, setShowRightPanel] = useState(true);
+  const [activeRightTab, setActiveRightTab] = useState<"notes" | "design">("notes");
 
   const initRef = useRef(false);
 
@@ -397,8 +407,46 @@ export default function SlidePage({
         draft.projectTitle || pending.projectTitle || "Bài giảng",
       );
       setStep("preview");
+    } else if (pending.projectId) {
+      // Fallback: load cloud draft from backend database
+      loadSlidesDraft(pending.projectId)
+        .then((cloudDraft) => {
+          if (cloudDraft && cloudDraft.slides && cloudDraft.slides.length > 0) {
+            setSlides(cloudDraft.slides);
+            const restoredLayouts: Record<number, SlideLayout> = {};
+            if (cloudDraft.layouts) {
+              Object.entries(cloudDraft.layouts).forEach(([k, v]) => {
+                restoredLayouts[Number(k)] = v as SlideLayout;
+              });
+            }
+            setLayouts(restoredLayouts);
+            if (cloudDraft.title) {
+              setProjectTitle(cloudDraft.title);
+            }
+            setStep("preview");
+            saveDraft(
+              pending.projectId,
+              cloudDraft.title || pending.projectTitle || "Bài giảng",
+              cloudDraft.slides,
+              restoredLayouts
+            );
+          }
+        })
+        .catch((err) => {
+          console.error("Lỗi khi tải bản nháp slide từ server:", err);
+        });
     }
   }, []);
+
+  // ── Auto-dismiss draft restored notification banner after 6 seconds ───────
+  useEffect(() => {
+    if (hasDraft) {
+      const timer = setTimeout(() => {
+        setHasDraft(false);
+      }, 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [hasDraft]);
 
   // ── Auto-save draft whenever slides change ────────────────────────────────
   useEffect(() => {
@@ -462,7 +510,7 @@ export default function SlidePage({
     setStep("downloading");
     setError("");
     try {
-      const blob = await downloadPptx(slides, projectTitle, templatePath);
+      const blob = await downloadPptx(slides, projectTitle);
       // Validate we got actual pptx bytes
       if (blob.size < 100)
         throw new Error("File xuất ra bị rỗng. Vui lòng thử lại.");
@@ -509,13 +557,6 @@ export default function SlidePage({
     } finally {
       setStep("preview");
     }
-  };
-
-  const clearDraft = () => {
-    localStorage.removeItem(DRAFT_KEY);
-    setHasDraft(false);
-    setSlides([]);
-    setStep("idle");
   };
 
   // ── Slide mutation helpers ─────────────────────────────────────────────────
@@ -610,28 +651,7 @@ export default function SlidePage({
     setActiveIdx(to);
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".pptx")) {
-      setError("Chỉ hỗ trợ file .pptx");
-      return;
-    }
-    setIsUploading(true);
-    setError("");
-    try {
-      const res = await uploadTemplate(file);
-      if (res.success) {
-        setTemplatePath(res.template_path);
-        setTemplateName(res.filename);
-      }
-    } catch (err: any) {
-      setError("Upload template thất bại: " + err.message);
-    } finally {
-      setIsUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  };
+
 
   // ── Render ────────────────────────────────────────────────────────────────
   const isLoading = step === "generating";
@@ -679,37 +699,7 @@ export default function SlidePage({
             {isLoading ? "⏳ Đang tạo..." : "✨ Khởi tạo Slide"}
           </button>
           
-          <input 
-            type="file" 
-            accept=".pptx" 
-            ref={fileInputRef} 
-            style={{ display: "none" }} 
-            onChange={handleFileUpload} 
-          />
-          <button
-            style={{ ...S.btn, ...S.btnSecondary, position: "relative" }}
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
-            title={templateName ? `Đang dùng mẫu: ${templateName}` : "Tải lên file PPTX làm mẫu slide"}
-          >
-            {isUploading ? "⏳ Tải lên..." : templateName ? `🎨 Mẫu: ${templateName.slice(0, 15)}...` : "🎨 Chọn Template"}
-            {templateName && (
-              <span 
-                style={{ 
-                  position: "absolute", top: -5, right: -5, background: "#ef4444", 
-                  color: "#fff", borderRadius: "50%", width: 16, height: 16, 
-                  fontSize: 10, display: "flex", alignItems: "center", justifyContent: "center"
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setTemplatePath("");
-                  setTemplateName("");
-                }}
-              >
-                ✕
-              </span>
-            )}
-          </button>
+
 
           {slides.length > 0 && (
             <>
@@ -821,6 +811,25 @@ export default function SlidePage({
               >
                 {isCloudSaving ? "☁ Đang lưu..." : cloudSaved ? "☁ Đã lưu" : ""}
               </span>
+
+              <button
+                onClick={() => setShowRightPanel(!showRightPanel)}
+                style={{
+                  background: showRightPanel ? "#eff6ff" : "transparent",
+                  border: showRightPanel ? "1px solid #bfdbfe" : "1px solid transparent",
+                  cursor: "pointer",
+                  color: showRightPanel ? "#2563eb" : "#64748b",
+                  padding: "6px",
+                  borderRadius: 8,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transition: "all 0.2s",
+                }}
+                title={showRightPanel ? "Ẩn bảng ghi chú & gợi ý" : "Hiện bảng ghi chú & gợi ý"}
+              >
+                <PanelRight size={18} />
+              </button>
             </>
           )}
         </div>
@@ -829,9 +838,9 @@ export default function SlidePage({
       {/* Draft banner */}
       {hasDraft && (
         <div className="sp-draft-banner" style={S.draftBanner}>
-          💾 Đã khôi phục bản nháp ({draftAge}) — {slides.length} slide.
-          <button className="sp-draft-btn" style={S.draftBtn} onClick={clearDraft}>
-            Xóa bản nháp
+          <span>💾 Đã khôi phục bản nháp ({draftAge}) — {slides.length} slide.</span>
+          <button className="sp-draft-btn" style={S.draftBtn} onClick={() => setHasDraft(false)}>
+            Đóng
           </button>
         </div>
       )}
@@ -884,384 +893,468 @@ export default function SlidePage({
 
       {/* Two-panel workspace */}
       {step === "preview" && slides.length > 0 && (
-        <div className="sp-workspace" style={S.workspace}>
+        <div className="sp-workspace">
           {/* Sidebar */}
-          <aside className="sp-sidebar" style={S.sidebar}>
-            <p className="sp-sidebar-label" style={S.sidebarLabel}>SLIDE ({slides.length})</p>
-            {slides.map((slide, idx) => {
-              const type = slideType(idx, slides.length);
-              const warn = hasTrimWarning(slide);
-              const isActive = safeIdx === idx;
-              const typeColor =
-                type === "TITLE"
-                  ? "#6366f1"
-                  : type === "SUMMARY"
-                    ? "#16a34a"
-                    : "#0ea5e9";
-              const layoutIcon = LAYOUTS.find((l) => l.id === (layouts[idx] ?? "standard"))?.icon ?? "▤";
-              return (
-                <div
-                  key={idx}
-                  style={{ position: "relative", marginBottom: 6 }}
-                >
-                  {/* Mini visual thumbnail */}
-                  <button
-                    className="thumb-card"
-                    style={{
-                      display: "block",
-                      width: "100%",
-                      border: isActive
-                        ? "2px solid #6366f1"
-                        : "2px solid transparent",
-                      borderRadius: 8,
-                      padding: 0,
-                      cursor: "pointer",
-                      background: "transparent",
-                      textAlign: "left",
-                      boxShadow: isActive ? "0 0 0 3px #6366f133" : "none",
-                      transition: "all 0.15s",
-                    }}
-                    onClick={() => {
-                      setActiveIdx(idx);
-                      setEditTitle(false);
-                      setEditBullet(null);
-                    }}
+          <aside className="sp-sidebar">
+            <p className="sp-sidebar-label">SLIDES ({slides.length})</p>
+            <div className="sp-sidebar-slides-list">
+              {slides.map((slide, idx) => {
+                const type = slideType(idx, slides.length);
+                const warn = hasTrimWarning(slide);
+                const isActive = safeIdx === idx;
+                const typeColor =
+                  type === "TITLE"
+                    ? "#6366f1"
+                    : type === "SUMMARY"
+                      ? "#16a34a"
+                      : "#0ea5e9";
+                const currentLayout = layouts[idx] ?? (slide.diagram ? "two_column" : "standard");
+                return (
+                  <div
+                    key={idx}
+                    className={`sp-thumb-container ${isActive ? "active" : ""}`}
                   >
-                    {/* Mini PPTX-style card */}
-                    <div
-                      style={{
-                        background: isActive ? "#162032" : "#0f172a",
-                        borderRadius: 6,
-                        padding: "8px 10px 8px 14px",
-                        position: "relative",
-                        overflow: "hidden",
-                        minHeight: 62,
+                    {/* Mini visual 16:9 thumbnail */}
+                    <button
+                      className="sp-thumb-card"
+                      title={`${slide.title || "Không có tiêu đề"}\n${(slide.bullet_points || []).map(b => `• ${b}`).join("\n")}${
+                        slide.diagram && slide.diagram.nodes && slide.diagram.nodes.length > 0
+                          ? `\n\n[Sơ đồ]:\n${slide.diagram.nodes.map(n => `  - ${n.label}`).join("\n")}`
+                          : ""
+                      }`}
+                      onClick={() => {
+                        setActiveIdx(idx);
+                        setEditTitle(false);
+                        setEditBullet(null);
                       }}
                     >
-                      <div
-                        style={{
-                          position: "absolute",
-                          left: 0,
-                          top: 0,
-                          bottom: 0,
-                          width: 4,
-                          background: typeColor,
-                          borderRadius: "6px 0 0 6px",
-                        }}
-                      />
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "flex-start",
-                          marginBottom: 3,
-                        }}
-                      >
-                        <span
-                          style={{
-                            fontSize: 9,
-                            fontWeight: 700,
-                            color: typeColor,
-                            textTransform: "uppercase",
-                            letterSpacing: "0.06em",
-                          }}
-                        >
-                          {type}
-                        </span>
-                        <span style={{ fontSize: 9, color: "#475569", display: "flex", alignItems: "center", gap: 3 }}>
-                          <span title={`Layout: ${layouts[idx] ?? "standard"}`} style={{ fontSize: 10 }}>{layoutIcon}</span>
-                          {idx + 1}/{slides.length}
-                        </span>
+                      <div className="sp-thumb-slide-wrapper">
+                        {/* Accent Bar */}
+                        <div
+                          className="sp-thumb-accent-bar"
+                          style={{ background: typeColor }}
+                        />
+                        {/* Slide Title */}
+                        <div className="sp-thumb-title-text">
+                          {slide.title || <span className="text-slate-300 italic">Không có tiêu đề</span>}
+                        </div>
+                        {/* Simulated bullets lines */}
+                        <div className="sp-thumb-content-proxy">
+                          {currentLayout === "big_title" ? (
+                            <div className="sp-thumb-big-title-indicator">Aa</div>
+                          ) : currentLayout === "two_column" ? (
+                            slide.diagram && slide.diagram.nodes && slide.diagram.nodes.length > 0 ? (
+                              <div className="sp-thumb-diagram-proxy">
+                                {slide.diagram.nodes.slice(0, 3).map(n => n.label).join(" → ")}
+                              </div>
+                            ) : (
+                              <div className="sp-thumb-columns-proxy">
+                                <div className="sp-thumb-col-proxy">
+                                  {slide.bullet_points.slice(0, 2).map((bp, bIdx) => (
+                                    <div key={bIdx} className="sp-thumb-bullet-text">{bp}</div>
+                                  ))}
+                                </div>
+                                <div className="sp-thumb-col-proxy">
+                                  {slide.bullet_points.slice(2, 4).map((bp, bIdx) => (
+                                    <div key={bIdx} className="sp-thumb-bullet-text">{bp}</div>
+                                  ))}
+                                </div>
+                              </div>
+                            )
+                          ) : (
+                            <div className="sp-thumb-bullets-proxy">
+                              {slide.bullet_points.slice(0, 3).map((bp, bIdx) => (
+                                <div key={bIdx} className="sp-thumb-bullet-text">{bp}</div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        {/* Footer indicator */}
+                        <div className="sp-thumb-footer-row">
+                          <span className="sp-thumb-type-badge" style={{ color: typeColor }}>{type}</span>
+                          <span className="sp-thumb-number-badge">
+                            {currentLayout === "big_title" ? "▦" : currentLayout === "two_column" ? "▥" : "▤"} {idx + 1}/{slides.length}
+                          </span>
+                        </div>
+                        {/* Warning badge */}
+                        {warn && (
+                          <span className="sp-thumb-warn-badge" title="Vi phạm quy tắc thiết kế 6x6">⚠</span>
+                        )}
                       </div>
-                      <p
-                        style={{
-                          fontSize: 10,
-                          fontWeight: 600,
-                          color: "#e2e8f0",
-                          margin: 0,
-                          lineHeight: 1.4,
-                          display: "-webkit-box",
-                          WebkitLineClamp: 2,
-                          WebkitBoxOrient: "vertical",
-                          overflow: "hidden",
-                        }}
-                      >
-                        {slide.title}
-                      </p>
-                      {slide.bullet_points.slice(0, 3).map((b, i) => (
-                        <p
-                          key={i}
-                          style={{
-                            fontSize: 8,
-                            color: "#64748b",
-                            margin: "2px 0 0",
-                            overflow: "hidden",
-                            whiteSpace: "nowrap",
-                            textOverflow: "ellipsis",
-                          }}
+                    </button>
+                    {/* Slide controls */}
+                    {isActive && (
+                      <div className="sp-thumb-actions-bar">
+                        <button
+                          className="sp-thumb-action-btn"
+                          onClick={() => moveSlide(idx, -1)}
+                          disabled={idx === 0}
+                          title="Di chuyển lên"
                         >
-                          ▸ {b}
-                        </p>
-                      ))}
-                      {warn && (
-                        <span
-                          style={{
-                            position: "absolute",
-                            top: 6,
-                            right: 6,
-                            fontSize: 9,
-                            background: "#f59e0b",
-                            color: "#fff",
-                            borderRadius: 3,
-                            padding: "1px 4px",
-                          }}
+                          <ArrowUp size={11} />
+                        </button>
+                        <button
+                          className="sp-thumb-action-btn"
+                          onClick={() => moveSlide(idx, 1)}
+                          disabled={idx === slides.length - 1}
+                          title="Di chuyển xuống"
                         >
-                          ⚠
-                        </span>
-                      )}
-                    </div>
-                  </button>
-                  {/* Move/duplicate/delete actions */}
-                  {isActive && (
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: 2,
-                        padding: "3px 4px 0",
-                        justifyContent: "flex-end",
-                      }}
-                    >
-                      <button
-                        style={S.microBtn}
-                        onClick={() => moveSlide(idx, -1)}
-                        disabled={idx === 0}
-                        title="Di chuyển lên"
-                      >
-                        ↑
-                      </button>
-                      <button
-                        style={S.microBtn}
-                        onClick={() => moveSlide(idx, 1)}
-                        disabled={idx === slides.length - 1}
-                        title="Di chuyển xuống"
-                      >
-                        ↓
-                      </button>
-                      <button
-                        style={{ ...S.microBtn, color: "#a78bfa" }}
-                        onClick={() => duplicateSlide(idx)}
-                        title="Nhân bản slide"
-                      >
-                        ⧉
-                      </button>
-                      <button
-                        style={{ ...S.microBtn, color: "#ef4444" }}
-                        onClick={() => deleteSlide(idx)}
-                        disabled={slides.length <= 1}
-                        title="Xóa slide"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                          <ArrowDown size={11} />
+                        </button>
+                        <button
+                          className="sp-thumb-action-btn text-indigo-500"
+                          onClick={() => duplicateSlide(idx)}
+                          title="Nhân bản slide"
+                        >
+                          <Copy size={11} />
+                        </button>
+                        <button
+                          className="sp-thumb-action-btn text-rose-500"
+                          onClick={() => deleteSlide(idx)}
+                          disabled={slides.length <= 1}
+                          title="Xóa slide"
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </aside>
 
-          {/* Main canvas + notes */}
+          {/* Center Column: Slide Canvas */}
           {currentSlide && (
-            <main className="sp-main" style={S.main}>
-              {/* Layout selector toolbar */}
-              <div
-                style={{
-                  display: "flex",
-                  gap: 6,
-                  alignItems: "center",
-                  marginBottom: 8,
-                  maxWidth: 900,
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: 11,
-                    color: "#94a3b8",
-                    fontWeight: 600,
-                    letterSpacing: "0.05em",
-                  }}
-                >
-                  LAYOUT
-                </span>
-                {LAYOUTS.map((l) => {
-                  const active = (layouts[safeIdx] ?? "standard") === l.id;
-                  return (
-                    <button
-                      key={l.id}
-                      onClick={() =>
-                        setLayouts((prev) => ({ ...prev, [safeIdx]: l.id }))
-                      }
-                      title={l.description}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 4,
-                        padding: "4px 10px",
-                        borderRadius: 6,
-                        fontSize: 12,
-                        fontWeight: 600,
-                        cursor: "pointer",
-                        border: "none",
-                        transition: "all 0.15s",
-                        background: active ? ACCENT : "#f1f5f9",
-                        color: active ? "#fff" : "#64748b",
-                        boxShadow: active ? "0 2px 8px #6366f140" : "none",
-                      }}
-                    >
-                      <span style={{ fontSize: 14 }}>{l.icon}</span>
-                      {l.label}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <SlideCanvas
-                slide={currentSlide}
-                slideIndex={safeIdx}
-                totalSlides={slides.length}
-                layout={layouts[safeIdx] ?? "standard"}
-                editTitle={editTitle}
-                editBullet={editBullet}
-                onTitleClick={() => setEditTitle(true)}
-                onTitleChange={(val) => updateSlide(safeIdx, "title", val)}
-                onTitleBlur={() => setEditTitle(false)}
-                onBulletClick={(i) => setEditBullet(i)}
-                onBulletChange={(i, val) => updateBullet(safeIdx, i, val)}
-                onBulletBlur={() => setEditBullet(null)}
-                onDeleteBullet={(i) => deleteBullet(safeIdx, i)}
-                onAddBullet={() => addBullet(safeIdx)}
-              />
-
-              {/* Speaker notes */}
-              <div className="sp-notes-box">
-                <span className="sp-notes-label">📝 Ghi chú diễn thuyết</span>
-                <textarea
-                  value={currentSlide.speaker_notes}
-                  onChange={(e) =>
-                    updateSlide(safeIdx, "speaker_notes", e.target.value)
-                  }
-                  placeholder="Nhập ghi chú cho người thuyết trình..."
-                  className="sp-notes-textarea"
-                  rows={2}
+            <main className="sp-center-main">
+              <div className="sp-canvas-container">
+                <SlideCanvas
+                  slide={currentSlide}
+                  slideIndex={safeIdx}
+                  totalSlides={slides.length}
+                  layout={layouts[safeIdx] ?? (currentSlide.diagram ? "two_column" : "standard")}
+                  editTitle={editTitle}
+                  editBullet={editBullet}
+                  onTitleClick={() => setEditTitle(true)}
+                  onTitleChange={(val) => updateSlide(safeIdx, "title", val)}
+                  onTitleBlur={() => setEditTitle(false)}
+                  onBulletClick={(i) => setEditBullet(i)}
+                  onBulletChange={(i, val) => updateBullet(safeIdx, i, val)}
+                  onBulletBlur={() => setEditBullet(null)}
+                  onDeleteBullet={(i) => deleteBullet(safeIdx, i)}
+                  onAddBullet={() => addBullet(safeIdx)}
+                  onUpdateDiagram={(diag) => updateSlide(safeIdx, "diagram", diag)}
                 />
               </div>
+            </main>
+          )}
 
-              {/* Smart Delivery Guidance */}
-              <div
-                style={{
-                  maxWidth: 900,
-                  display: "grid",
-                  gridTemplateColumns: "1fr 180px",
-                  gap: 12,
-                  marginBottom: 12,
-                }}
-              >
-                {/* Talking Points */}
-                <div
-                  style={{
-                    background: "#f8fafc",
-                    border: "1px solid #e2e8f0",
-                    borderRadius: 10,
-                    padding: "12px",
-                  }}
-                >
-                  <span
-                    style={{
-                      display: "block",
-                      fontSize: 11,
-                      fontWeight: 700,
-                      color: "#64748b",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.05em",
-                      marginBottom: 8,
-                    }}
+          {/* Right Column: AI Assistant & Notes Panel */}
+          {showRightPanel && currentSlide && (
+            <aside className="sp-right-panel">
+              {/* Tab Header (Segmented control) */}
+              <div className="sp-right-panel-header">
+                <div className="sp-right-tabs-control">
+                  <button
+                    onClick={() => setActiveRightTab("notes")}
+                    className={`sp-right-tab-btn ${activeRightTab === "notes" ? "active" : ""}`}
                   >
-                    💡 Kịch bản gợi ý
-                  </span>
-                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "#334155" }}>
-                    {(currentSlide.talking_points || []).length > 0 ? (
-                      currentSlide.talking_points?.map((pt, i) => <li key={i} style={{ marginBottom: 4 }}>{pt}</li>)
-                    ) : (
-                      <li style={{ color: "#94a3b8", fontStyle: "italic" }}>Chưa có kịch bản gợi ý cho slide này.</li>
-                    )}
-                  </ul>
-                </div>
-
-                {/* Duration */}
-                <div
-                  style={{
-                    background: "#f0fdf4",
-                    border: "1px solid #dcfce7",
-                    borderRadius: 10,
-                    padding: "12px",
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <span style={{ fontSize: 11, fontWeight: 700, color: "#166534", textTransform: "uppercase", marginBottom: 4 }}>
-                    ⏱ Thời lượng
-                  </span>
-                  <div style={{ fontSize: 24, fontWeight: 800, color: "#15803d" }}>
-                    {currentSlide.estimated_duration || 60}s
-                  </div>
-                  <span style={{ fontSize: 11, color: "#16a34a" }}>Dự kiến trình bày</span>
+                    <FileText size={14} />
+                    <span>Thuyết trình</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveRightTab("design")}
+                    className={`sp-right-tab-btn ${activeRightTab === "design" ? "active" : ""}`}
+                  >
+                    <Layout size={14} />
+                    <span>Thiết kế</span>
+                  </button>
                 </div>
               </div>
 
-              {/* Visual suggestion — shown only when AI provided one */}
-              {currentSlide.visual_prompt && (
-                <div
-                  style={{
-                    maxWidth: 900,
-                    background: "linear-gradient(135deg, #eef2ff 0%, #f0f9ff 100%)",
-                    border: "1.5px solid #c7d2fe",
-                    borderRadius: 10,
-                    padding: "12px 16px",
-                    display: "flex",
-                    gap: 12,
-                    alignItems: "flex-start",
-                  }}
-                >
-                  <span style={{ fontSize: 22, lineHeight: 1 }}>🖼️</span>
-                  <div>
-                    <p
-                      style={{
-                        margin: "0 0 4px 0",
-                        fontSize: 11,
-                        fontWeight: 700,
-                        letterSpacing: "0.07em",
-                        color: "#4f46e5",
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      Gợi ý hình ảnh / sơ đồ
-                    </p>
-                    <p
-                      style={{
-                        margin: 0,
-                        fontSize: 13,
-                        color: "#1e40af",
-                        lineHeight: 1.5,
-                      }}
-                    >
-                      {currentSlide.visual_prompt}
-                    </p>
-                  </div>
-                </div>
-              )}
+              <div className="sp-right-panel-body custom-scrollbar">
+                {activeRightTab === "notes" ? (
+                  <div className="space-y-4">
+                    {/* Duration */}
+                    <div className="sp-right-card sp-right-duration-card">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
+                          <Clock size={12} />
+                          Thời lượng dự kiến
+                        </span>
+                        <span className="text-xs font-semibold text-emerald-600">Dự kiến trình bày</span>
+                      </div>
+                      <div className="text-2xl font-extrabold text-emerald-700 mt-1">
+                        {currentSlide.estimated_duration || 60}s
+                      </div>
+                    </div>
 
-            </main>
+                    {/* Speaker Notes */}
+                    <div className="sp-right-card bg-white border border-slate-100">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                        Ghi chú diễn thuyết
+                      </label>
+                      <textarea
+                        value={currentSlide.speaker_notes}
+                        onChange={(e) =>
+                          updateSlide(safeIdx, "speaker_notes", e.target.value)
+                        }
+                        placeholder="Nhập ghi chú cho người thuyết trình..."
+                        className="sp-right-textarea focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all duration-200"
+                        rows={5}
+                      />
+                    </div>
+
+                    {/* Talking Points */}
+                    <div className="sp-right-card bg-slate-50 border border-slate-100">
+                      <span className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
+                        <Sparkles size={12} className="text-blue-600" />
+                        Kịch bản gợi ý
+                      </span>
+                      <ul className="space-y-2 text-xs text-slate-700 leading-relaxed font-medium pl-4 list-disc">
+                        {(currentSlide.talking_points || []).length > 0 ? (
+                          currentSlide.talking_points?.map((pt, i) => (
+                            <li key={i} className="pl-0.5">{pt}</li>
+                          ))
+                        ) : (
+                          <li className="text-slate-400 italic list-none pl-0">Chưa có kịch bản gợi ý cho slide này.</li>
+                        )}
+                      </ul>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {/* Slide Layout Selection */}
+                    <div className="sp-right-card bg-white border border-slate-100">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">
+                        Chọn Bố cục Slide (Layout)
+                      </label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {LAYOUTS.map((l) => {
+                          const active = (layouts[safeIdx] ?? (currentSlide.diagram ? "two_column" : "standard")) === l.id;
+                          return (
+                            <button
+                              key={l.id}
+                              onClick={() =>
+                                setLayouts((prev) => ({ ...prev, [safeIdx]: l.id }))
+                              }
+                              title={l.description}
+                              className={`flex flex-col items-center justify-center p-2.5 rounded-xl border transition-all duration-200 cursor-pointer ${
+                                active
+                                  ? "bg-blue-50/50 border-blue-500 text-blue-600 shadow-sm"
+                                  : "border-slate-100 hover:border-slate-200 text-slate-500 hover:text-slate-700 bg-slate-50/50"
+                              }`}
+                            >
+                              <span className="text-lg font-bold mb-1">{l.icon}</span>
+                              <span className="text-[10px] font-bold tracking-tight">{l.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Visual Suggestion */}
+                    {currentSlide.visual_prompt && (
+                      <div className="sp-right-card bg-blue-50/30 border border-blue-100/50">
+                        <span className="block text-[10px] font-bold text-blue-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                          💡 Ý nghĩa & Ý tưởng thiết kế sơ đồ
+                        </span>
+                        <p className="text-xs text-blue-900 leading-relaxed font-semibold">
+                          {currentSlide.visual_prompt}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Diagram Editor */}
+                    <div className="sp-right-card bg-white border border-slate-100">
+                      <div className="flex items-center justify-between mb-3">
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          Sơ đồ tương tác (Flowchart)
+                        </label>
+                        {currentSlide.diagram ? (
+                          <button
+                            onClick={() => updateSlide(safeIdx, "diagram", undefined)}
+                            className="text-[10px] text-rose-500 hover:text-rose-700 font-semibold border-none bg-transparent cursor-pointer"
+                          >
+                            Xóa sơ đồ
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              updateSlide(safeIdx, "diagram", {
+                                nodes: [
+                                  { id: "A", label: "Bắt đầu" },
+                                  { id: "B", label: "Kết thúc" }
+                                ],
+                                links: [
+                                  { source: "A", target: "B", label: "Liên kết" }
+                                ]
+                              });
+                              // Automatically switch layout to two_column to display the diagram!
+                              setLayouts(prev => ({ ...prev, [safeIdx]: "two_column" }));
+                            }}
+                            className="text-[10px] text-indigo-600 hover:text-indigo-800 font-semibold border-none bg-transparent cursor-pointer"
+                          >
+                            + Tạo sơ đồ mới
+                          </button>
+                        )}
+                      </div>
+
+                      {currentSlide.diagram && (
+                        <div className="space-y-4">
+                          {/* Nodes list */}
+                          <div className="border-t border-slate-50 pt-2.5">
+                            <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-2">Các thành phần (Nodes)</span>
+                            <div className="space-y-2">
+                              {currentSlide.diagram.nodes.map((node, nIdx) => (
+                                <div key={node.id} className="flex items-center gap-1.5">
+                                  <span className="text-[10px] font-bold text-indigo-500 bg-indigo-50 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0">
+                                    {node.id}
+                                  </span>
+                                  <input
+                                    type="text"
+                                    value={node.label}
+                                    onChange={(e) => {
+                                      const nextNodes = [...(currentSlide.diagram?.nodes || [])];
+                                      nextNodes[nIdx] = { ...node, label: e.target.value };
+                                      updateSlide(safeIdx, "diagram", {
+                                        ...currentSlide.diagram!,
+                                        nodes: nextNodes
+                                      });
+                                    }}
+                                    placeholder="Tên thành phần..."
+                                    className="flex-1 text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:border-indigo-500 bg-slate-50/50"
+                                  />
+                                  <button
+                                    onClick={() => {
+                                      const nextNodes = (currentSlide.diagram?.nodes || []).filter(n => n.id !== node.id);
+                                      const nextLinks = (currentSlide.diagram?.links || []).filter(l => l.source !== node.id && l.target !== node.id);
+                                      updateSlide(safeIdx, "diagram", {
+                                        nodes: nextNodes,
+                                        links: nextLinks
+                                      });
+                                    }}
+                                    disabled={(currentSlide.diagram?.nodes || []).length <= 1}
+                                    className="p-1 text-slate-400 hover:text-rose-500 disabled:opacity-30 border-none bg-transparent cursor-pointer"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                            <button
+                              onClick={() => {
+                                const nextNodes = [...(currentSlide.diagram?.nodes || [])];
+                                const lastId = nextNodes.length > 0 ? nextNodes[nextNodes.length - 1].id : "@";
+                                const newId = String.fromCharCode(lastId.charCodeAt(0) + 1);
+                                nextNodes.push({ id: newId, label: `Thành phần ${newId}` });
+                                updateSlide(safeIdx, "diagram", {
+                                  ...(currentSlide.diagram || { links: [] }),
+                                  nodes: nextNodes
+                                });
+                              }}
+                              className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 bg-transparent border-none cursor-pointer mt-2"
+                            >
+                              + Thêm thành phần
+                            </button>
+                          </div>
+
+                          {/* Links list */}
+                          <div className="border-t border-slate-50 pt-2.5">
+                            <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-2">Các kết nối (Links)</span>
+                            <div className="space-y-2 max-h-[150px] overflow-y-auto custom-scrollbar pr-1">
+                              {currentSlide.diagram.links.map((link, lIdx) => (
+                                <div key={lIdx} className="flex items-center gap-1 bg-slate-50/50 p-1.5 rounded border border-slate-100">
+                                  <select
+                                    value={link.source}
+                                    onChange={(e) => {
+                                      const nextLinks = [...(currentSlide.diagram?.links || [])];
+                                      nextLinks[lIdx] = { ...link, source: e.target.value };
+                                      updateSlide(safeIdx, "diagram", {
+                                        ...currentSlide.diagram!,
+                                        links: nextLinks
+                                      });
+                                    }}
+                                    className="text-[10px] border border-slate-200 rounded p-0.5 outline-none font-bold text-indigo-600 bg-white"
+                                  >
+                                    {currentSlide.diagram?.nodes.map(n => (
+                                      <option key={n.id} value={n.id}>{n.id}</option>
+                                    ))}
+                                  </select>
+                                  <span className="text-[9px] text-slate-400">→</span>
+                                  <select
+                                    value={link.target}
+                                    onChange={(e) => {
+                                      const nextLinks = [...(currentSlide.diagram?.links || [])];
+                                      nextLinks[lIdx] = { ...link, target: e.target.value };
+                                      updateSlide(safeIdx, "diagram", {
+                                        ...currentSlide.diagram!,
+                                        links: nextLinks
+                                      });
+                                    }}
+                                    className="text-[10px] border border-slate-200 rounded p-0.5 outline-none font-bold text-indigo-600 bg-white"
+                                  >
+                                    {currentSlide.diagram?.nodes.map(n => (
+                                      <option key={n.id} value={n.id}>{n.id}</option>
+                                    ))}
+                                  </select>
+                                  <input
+                                    type="text"
+                                    value={link.label || ""}
+                                    onChange={(e) => {
+                                      const nextLinks = [...(currentSlide.diagram?.links || [])];
+                                      nextLinks[lIdx] = { ...link, label: e.target.value };
+                                      updateSlide(safeIdx, "diagram", {
+                                        ...currentSlide.diagram!,
+                                        links: nextLinks
+                                      });
+                                    }}
+                                    placeholder="Nhãn liên kết..."
+                                    className="flex-1 text-[10px] border border-slate-200 rounded px-1 py-0.5 outline-none bg-white"
+                                  />
+                                  <button
+                                    onClick={() => {
+                                      const nextLinks = (currentSlide.diagram?.links || []).filter((_, li) => li !== lIdx);
+                                      updateSlide(safeIdx, "diagram", {
+                                        ...currentSlide.diagram!,
+                                        links: nextLinks
+                                      });
+                                    }}
+                                    className="p-0.5 text-slate-400 hover:text-rose-500 border-none bg-transparent cursor-pointer"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                            <button
+                              onClick={() => {
+                                const nodesList = currentSlide.diagram?.nodes || [];
+                                if (nodesList.length < 2) return;
+                                const nextLinks = [...(currentSlide.diagram?.links || [])];
+                                nextLinks.push({
+                                  source: nodesList[0].id,
+                                  target: nodesList[1].id,
+                                  label: "liên kết"
+                                });
+                                updateSlide(safeIdx, "diagram", {
+                                  ...currentSlide.diagram!,
+                                  links: nextLinks
+                                });
+                              }}
+                              disabled={(currentSlide.diagram?.nodes || []).length < 2}
+                              className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 bg-transparent border-none cursor-pointer mt-2 disabled:opacity-30"
+                            >
+                              + Thêm kết nối
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </aside>
           )}
         </div>
       )}
@@ -1271,8 +1364,7 @@ export default function SlidePage({
         <div className="sp-center">
           <div style={{ fontSize: 56, marginBottom: 12 }}>🖼️</div>
           <p className="sp-idle-text">
-            Nhấn <strong>✨ Khởi tạo Slide</strong> để tạo từ nội dung bài
-            giảng.
+            Nhấn <strong>✨ Khởi tạo Slide</strong> để tạo từ nội dung bài giảng.
             <br />
             <span style={{ fontSize: 13, color: "#94a3b8" }}>
               Chỉnh sửa tiêu đề, bullet và ghi chú trực tiếp. Bản nháp tự lưu.
@@ -1293,7 +1385,7 @@ export default function SlidePage({
                 setEditTitle(false);
                 setEditBullet(null);
                 // Scroll canvas into view on mobile
-                document.querySelector(".sp-main")?.scrollTo({ top: 0, behavior: "smooth" });
+                document.querySelector(".sp-center-main")?.scrollTo({ top: 0, behavior: "smooth" });
               }}
               title={slide.title}
             >

@@ -367,6 +367,22 @@ export interface QuizStats {
   last_attempt_at: string | null;
 }
 
+export interface DiagramNode {
+  id: string;
+  label: string;
+}
+
+export interface DiagramLink {
+  source: string;
+  target: string;
+  label?: string;
+}
+
+export interface SlideDiagram {
+  nodes: DiagramNode[];
+  links: DiagramLink[];
+}
+
 export interface SlideItem {
   title: string;
   bullet_points: string[];
@@ -374,6 +390,7 @@ export interface SlideItem {
   visual_prompt?: string;
   talking_points?: string[];
   estimated_duration?: number;
+  diagram?: SlideDiagram;
 }
 
 export interface GenerateOutlineResponse {

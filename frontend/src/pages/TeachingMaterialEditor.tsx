@@ -738,13 +738,42 @@ export default function TeachingMaterialEditor() {
   const [showCitationsInPreview, setShowCitationsInPreview] = useState(true);
   const [showPromptSuggestionHint, setShowPromptSuggestionHint] =
     useState(false);
-  const [isSlideModalOpen, setIsSlideModalOpen] = useState(false);
+  const [isSlideModalOpen, setIsSlideModalOpen] = useState(() => {
+    try {
+      const stored = sessionStorage.getItem(`rag.editor.slideModal.${projectId}`);
+      return stored === "true";
+    } catch {
+      return false;
+    }
+  });
   const [slideEmbeddedData, setSlideEmbeddedData] = useState<{
     projectId: string;
     lessonContent: string;
     projectTitle: string;
     numSlides: number;
-  } | null>(null);
+  } | null>(() => {
+    try {
+      const data = sessionStorage.getItem(`rag.editor.slideData.${projectId}`);
+      return data ? JSON.parse(data) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    if (!projectId) return;
+    sessionStorage.setItem(`rag.editor.slideModal.${projectId}`, String(isSlideModalOpen));
+  }, [isSlideModalOpen, projectId]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    if (slideEmbeddedData) {
+      sessionStorage.setItem(`rag.editor.slideData.${projectId}`, JSON.stringify(slideEmbeddedData));
+    } else {
+      sessionStorage.removeItem(`rag.editor.slideData.${projectId}`);
+    }
+  }, [slideEmbeddedData, projectId]);
+
   const [isDownloadMenuOpen, setIsDownloadMenuOpen] = useState(false);
   const [exportingFormat, setExportingFormat] =
     useState<EditorProjectExportFormat | null>(null);
