@@ -20,7 +20,7 @@ import re
 import os
 import uuid
 import shutil
-from typing import List
+from typing import List, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File
@@ -40,6 +40,21 @@ router = APIRouter(prefix="/slides", tags=["slides"])
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
+class DiagramNode(BaseModel):
+    id: str
+    label: str
+    x: Optional[float] = None
+    y: Optional[float] = None
+
+class DiagramLink(BaseModel):
+    source: str
+    target: str
+    label: str = ""
+
+class SlideDiagram(BaseModel):
+    nodes: List[DiagramNode] = Field(default_factory=list)
+    links: List[DiagramLink] = Field(default_factory=list)
+
 class SlideItem(BaseModel):
     title: str = Field(..., min_length=1, max_length=150)
     bullet_points: List[str] = Field(..., min_length=1)
@@ -47,6 +62,7 @@ class SlideItem(BaseModel):
     visual_prompt: str = Field(default="")  # AI-suggested image/diagram idea for this slide
     talking_points: List[str] = Field(default_factory=list) # What the teacher should say
     estimated_duration: int = Field(default=60) # Estimated time in seconds
+    diagram: Optional[SlideDiagram] = Field(default=None)
 
     @field_validator("bullet_points")
     @classmethod
@@ -140,37 +156,52 @@ def _distribute_slides(sections: list[dict], total: int) -> list[dict]:
 # ── Prompts ───────────────────────────────────────────────────────────────────
 
 _TITLE_SLIDE_PROMPT = """\
-Generate 1 TITLE slide for a lecture presentation.
-Title: "{deck_title}"
-Key themes covered: {themes}
+You are an expert academic presentation designer.
+Generate 1 TITLE slide for a lecture presentation based on the provided Lesson Preview and Topic.
+
+Topic/Title: "{deck_title}"
+Key themes (Sections): {themes}
+Lesson Preview Content:
+\"\"\"
+{lesson_preview}
+\"\"\"
 
 Rules:
-- title: catchy hook question or bold claim (≤10 words, Vietnamese)
-- bullet_points: exactly 3 items — the 3 big questions this lecture answers
-- speaker_notes: 2 sentences the presenter says to open the class
+- title: MUST be exactly or based closely on the Topic/Title "{deck_title}" (Vietnamese, ≤12 words. Do NOT use generic placeholders like "Tiêu đề bài học" if the Lesson Preview has a more specific title).
+- bullet_points: exactly 3 items — the 3 core questions this specific lecture answers, extracted directly from the actual lesson content (each item MUST be ≤ 8 words, Vietnamese).
+- speaker_notes: 2 sentences the presenter says to open the class, reflecting the real topic.
 
 Return ONLY JSON: {{"title":"...","bullet_points":["...","...","..."],"speaker_notes":"..."}}"""
 
 _SECTION_PROMPT = """\
 You are an expert academic presentation designer using the Assertion-Evidence methodology.
 
-Analyze the section content below and generate between {min_count} and {max_count} slides.
-You decide the exact number — base it on content complexity and number of distinct ideas.
-Do NOT pad with extra slides just to hit the maximum.
+Analyze the section content below and generate exactly {target_count} slides.
+Do NOT generate more or fewer slides than {target_count}.
 
 SECTION: "{section_title}"
 
 RULES FOR EACH SLIDE:
-1. ASSERTION TITLE — state the key insight or claim the student should remember.
+1. ASSERTION TITLE — State the key insight or claim the student should remember in Vietnamese (≤12 words).
    ✓ "Caching giảm tải server tới 80% trong traffic cao"  ✗ "Giới thiệu về Caching"
-2. EVIDENCE BULLETS (Quy tắc 6x6) — max 6 bullets, each MUST be ≤ 8 words. 
-   Use keywords, facts, numbers, steps. NEVER write full sentences.
+2. EVIDENCE BULLETS (Quy tắc 6x6) — max 6 bullets, each MUST be ≤ 8 words in Vietnamese.
+   Use keywords, facts, numbers, steps. NEVER write full sentences. Keep them extremely short and punchy.
+   * Ví dụ tồi (dài dòng, nhiều chữ): "Bộ nhớ cache giúp tối ưu tốc độ bằng cách lưu trữ tạm thời dữ liệu thường truy cập." (16 từ)
+   * Ví dụ tốt (ngắn gọn): "Lưu tạm dữ liệu truy cập nhiều" (7 từ)
+   * Ví dụ tồi: "Giảm tải cho cơ sở dữ liệu và tăng trải nghiệm người dùng cuối tốt hơn." (14 từ)
+   * Ví dụ tốt: "Giảm tải database, tăng trải nghiệm" (6 từ)
 3. SPEAKER NOTES — 2–3 sentences. Add analogy, real-world example, or common misconception.
    NEVER repeat the bullets verbatim.
 4. TALKING POINTS — 3-5 bullet points of a presentation script (Kịch bản thuyết trình) for the speaker.
 5. ESTIMATED DURATION — integer (in seconds) for how long the slide should be presented (e.g. 60, 90, 120).
-6. VISUAL SUGGESTION — describe a specific image, diagram, or chart that would illustrate this
-   slide best. Be concrete: "Sơ đồ luồng dữ liệu Client→Cache→Server" not just "Sơ đồ".
+6. VISUAL SUGGESTION (visual_prompt) & DIAGRAM (diagram) — Describe a specific flowchart, diagram, layout, or chart that illustrates this slide best.
+   If the slide's visual prompt can be represented structurally as a flowchart or pipeline, you MUST also generate a structured "diagram" object.
+   The "diagram" object must contain:
+   - "nodes": a list of components, each with "id" (short unique ID like "A", "B", "C") and "label" (brief Vietnamese name, ≤4 words).
+   - "links": a list of connections, each with "source" (source node ID), "target" (target node ID), and optional "label" (brief description of connection, ≤3 words).
+   If the slide does NOT require a diagram or flowchart (e.g. simple list of facts), set "diagram" to null.
+   ✓ "Sơ đồ gồm 3 khối hộp ngang: Client → Cache → Server. Mũi tên 2 chiều giữa Client và Cache thể hiện truy vấn nhanh; mũi tên đứt đoạn từ Cache đến Server thể hiện đồng bộ định kỳ."
+   ✗ "Hình ảnh minh họa cache" hoặc "Sơ đồ luồng"
 7. Language: Vietnamese. Keep technical terms (API, cache, gradient, SQL, etc.) in English.
 
 SECTION CONTENT:
@@ -180,24 +211,41 @@ Return ONLY a valid JSON array (no wrapper object):
 [
   {{
     "title": "[Assertion — key claim in ≤12 words]",
-    "bullet_points": ["[Fact/step ≤10 words]", "..."],
+    "bullet_points": ["[Fact/step ≤8 words]", "..."],
     "speaker_notes": "[2–3 sentences for the presenter]",
     "talking_points": ["[Script point 1]", "[Script point 2]", "..."],
     "estimated_duration": 60,
-    "visual_prompt": "[Concrete image or diagram suggestion in Vietnamese]"
+    "visual_prompt": "[Descriptive structure of flowchart or diagram in Vietnamese]",
+    "diagram": {{
+      "nodes": [
+        {{"id": "A", "label": "Client"}},
+        {{"id": "B", "label": "Cache"}},
+        {{"id": "C", "label": "Server"}}
+      ],
+      "links": [
+        {{"source": "A", "target": "B", "label": "Gửi yêu cầu"}},
+        {{"source": "B", "target": "C", "label": "Miss cache"}}
+      ]
+    }}
   }},
   ...
 ]"""
 
 _SUMMARY_PROMPT = """\
-Generate 1 SUMMARY slide for a lecture on: "{deck_title}"
+You are an expert academic presentation designer.
+Generate 1 SUMMARY slide for a lecture presentation based on the Lesson Preview.
 
+Topic/Title: "{deck_title}"
 Sections covered: {sections_list}
+Lesson Preview Content:
+\"\"\"
+{lesson_preview}
+\"\"\"
 
 Rules:
-- title: "Tổng kết: [key insight in ≤8 words]"
-- bullet_points: exactly 4 action-oriented takeaways students should remember
-  Format: "Hiểu được / Áp dụng được / Nhận biết được / Phân biệt được ..."
+- title: "Tổng kết: [key insight from the lesson in ≤8 words, Vietnamese]"
+- bullet_points: exactly 4 action-oriented takeaways students should remember, based on the actual lesson content. Each bullet point MUST be ≤ 8 words, Vietnamese.
+  Format: "Hiểu được [khái niệm] / Áp dụng được [kỹ năng] / Nhận biết được [đặc điểm] / Phân biệt được [phân loại]..."
 - speaker_notes: 2 sentences encouraging students to review and apply knowledge
 
 Return ONLY JSON: {{"title":"...","bullet_points":["...","...","...","..."],"speaker_notes":"..."}}"""
@@ -244,36 +292,34 @@ def _extract_json_array(raw: str) -> list:
     raise ValueError("No JSON array found in LLM output")
 
 
-async def _gen_title_slide(deck_title: str, section_titles: list[str]) -> SlideItem:
+async def _gen_title_slide(deck_title: str, section_titles: list[str], lesson_preview: str) -> SlideItem:
     themes = ", ".join(section_titles[:5])
-    prompt = _TITLE_SLIDE_PROMPT.format(deck_title=deck_title, themes=themes)
+    prompt = _TITLE_SLIDE_PROMPT.format(deck_title=deck_title, themes=themes, lesson_preview=lesson_preview)
     raw = await asyncio.to_thread(_llm_sync, prompt, 400)
     data = _extract_json_object(raw)
     return SlideItem.model_validate(data)
 
 
 async def _gen_section_slides(section: dict) -> list[SlideItem]:
-    """Call LLM with a slide range — LLM decides exact count based on content complexity."""
+    """Call LLM to generate exactly target_count slides."""
     body_truncated = section["body"][:2800]  # slightly more context for better decisions
-    min_count = section["min_count"]
-    max_count = section["max_count"]
+    target_count = section["target_count"]
     prompt = _SECTION_PROMPT.format(
-        min_count=min_count,
-        max_count=max_count,
+        target_count=target_count,
         section_title=section["title"],
         body=body_truncated,
     )
-    # Token budget: enough for max_count slides with visual_prompt field
-    tokens = min(400 + max_count * 450, 3200)
+    # Token budget: enough for target_count slides with visual_prompt field
+    tokens = min(400 + target_count * 450, 3200)
     raw = await asyncio.to_thread(_llm_sync, prompt, tokens)
     items = _extract_json_array(raw)
-    # Enforce hard cap at max_count to prevent runaway
-    return [SlideItem.model_validate(it) for it in items[:max_count]]
+    # Enforce hard cap at target_count to prevent runaway
+    return [SlideItem.model_validate(it) for it in items[:target_count]]
 
 
-async def _gen_summary_slide(deck_title: str, section_titles: list[str]) -> SlideItem:
+async def _gen_summary_slide(deck_title: str, section_titles: list[str], lesson_preview: str) -> SlideItem:
     sections_list = " | ".join(section_titles)
-    prompt = _SUMMARY_PROMPT.format(deck_title=deck_title, sections_list=sections_list)
+    prompt = _SUMMARY_PROMPT.format(deck_title=deck_title, sections_list=sections_list, lesson_preview=lesson_preview)
     raw = await asyncio.to_thread(_llm_sync, prompt, 400)
     data = _extract_json_object(raw)
     return SlideItem.model_validate(data)
@@ -282,59 +328,161 @@ async def _gen_summary_slide(deck_title: str, section_titles: list[str]) -> Slid
 def _split_long_slides(slides: list[SlideItem]) -> list[SlideItem]:
     new_slides = []
     for slide in slides:
-        if len(slide.bullet_points) > 5:
+        if len(slide.bullet_points) > 6:
             bullets = slide.bullet_points
-            for i in range(0, len(bullets), 5):
-                chunk = bullets[i:i+5]
+            for i in range(0, len(bullets), 6):
+                chunk = bullets[i:i+6]
                 title = slide.title if i == 0 else f"{slide.title} (tiếp theo)"
                 notes = slide.speaker_notes if i == 0 else ""
-                # Preserve visual_prompt on first chunk only
                 visual = slide.visual_prompt if i == 0 else ""
+                diagram = slide.diagram if i == 0 else None
                 new_slides.append(SlideItem(
                     title=title,
                     bullet_points=chunk,
                     speaker_notes=notes,
                     visual_prompt=visual,
+                    diagram=diagram,
                 ))
         else:
             new_slides.append(slide)
     return new_slides
 
 
+def validate_slide_diagram(slide: SlideItem) -> SlideItem:
+    if not slide.diagram:
+        return slide
+        
+    # 1. Clean nodes: remove duplicates, limit to max 5
+    seen_ids = set()
+    valid_nodes = []
+    for node in slide.diagram.nodes:
+        node.id = node.id.strip().upper()
+        node.label = node.label.strip()
+        if node.id and node.label and node.id not in seen_ids and len(valid_nodes) < 5:
+            seen_ids.add(node.id)
+            valid_nodes.append(node)
+            
+    # 2. Clean links: source and target must be in seen_ids, no self-loops, no duplicates
+    seen_links = set()
+    valid_links = []
+    for link in slide.diagram.links:
+        link.source = link.source.strip().upper()
+        link.target = link.target.strip().upper()
+        link.label = link.label.strip()
+        if link.source in seen_ids and link.target in seen_ids:
+            if link.source != link.target:
+                link_key = (link.source, link.target)
+                if link_key not in seen_links:
+                    seen_links.add(link_key)
+                    valid_links.append(link)
+                    
+    # If we have less than 2 nodes, diagram is not meaningful
+    if len(valid_nodes) < 2:
+        slide.diagram = None
+    else:
+        slide.diagram.nodes = valid_nodes
+        slide.diagram.links = valid_links
+        
+    return slide
+
+
+def _merge_sections(sections: list[dict], target_count: int) -> list[dict]:
+    """
+    Merge adjacent sections until the total number of sections is target_count.
+    Balances the weights (word counts) of the merged sections.
+    """
+    sections = [dict(s) for s in sections]  # copy
+    while len(sections) > target_count:
+        # Find the adjacent pair with the minimum combined weight
+        min_idx = 0
+        min_weight = sections[0]["weight"] + sections[1]["weight"]
+        for i in range(1, len(sections) - 1):
+            w = sections[i]["weight"] + sections[i + 1]["weight"]
+            if w < min_weight:
+                min_weight = w
+                min_idx = i
+        
+        # Merge sections[min_idx] and sections[min_idx + 1]
+        merged_body = f"{sections[min_idx]['body']}\n\n{sections[min_idx+1]['body']}"
+        merged_title = f"{sections[min_idx]['title']} & {sections[min_idx+1]['title']}"
+        # Truncate title if it becomes too long
+        if len(merged_title) > 60:
+            merged_title = merged_title[:57] + "..."
+            
+        sections[min_idx] = {
+            "title": merged_title,
+            "body": merged_body,
+            "weight": sections[min_idx]["weight"] + sections[min_idx+1]["weight"]
+        }
+        sections.pop(min_idx + 1)
+        
+    return sections
+
+
+def _should_exclude_section_from_slides(title: str) -> bool:
+    """Check if a section should be excluded from content slides (e.g. Summary, Quiz)."""
+    normalized = title.lower().strip()
+    exclude_keywords = [
+        "tóm tắt", "tom tat", "tổng kết", "tong ket", "summary", "conclusion", "kết luận", "ket luan",
+        "câu hỏi", "cau hoi", "bài tập", "bai tap", "quiz", "trắc nghiệm", "trac nghiem", "ôn tập", "on tap"
+    ]
+    return any(kw in normalized for kw in exclude_keywords)
+
+
 async def _build_outline(lesson_content: str, num_slides: int, deck_title: str) -> list[SlideItem]:
     """
     Content-driven pipeline:
       1. Parse lesson into sections (by markdown headers)
-      2. Assign a RANGE [min, max] of slides per section based on content weight
-         — LLM decides exact count within that range
-      3. Call LLM in parallel for each section
-      4. Stitch: title slide | section slides | summary slide
+      2. Filter out redundant summary/quiz sections to keep slides focused
+      3. If sections exceed content budget, merge them to respect slide count
+      4. Assign target slides per section based on content weight
+      5. Call LLM in parallel for each section
+      6. Stitch: title slide | section slides | summary slide
     """
-    sections = _parse_sections(lesson_content)
-    content_budget = max(num_slides - 2, len(sections))  # reserve 1 title + 1 summary
+    all_sections = _parse_sections(lesson_content)
+    
+    # Filter out summary/quiz sections from regular content slides
+    sections = [s for s in all_sections if not _should_exclude_section_from_slides(s["title"])]
+    if not sections:
+        sections = all_sections  # fallback if all were filtered out
+
+    content_budget = num_slides - 2  # reserve 1 title + 1 summary
+    if content_budget < 1:
+        content_budget = 1
+
+    # Merge adjacent sections if they exceed content budget
+    if len(sections) > content_budget:
+        sections = _merge_sections(sections, content_budget)
+
     total_weight = sum(max(s["weight"], 1) for s in sections)
 
-    # Assign [min_count, max_count] ranges instead of exact counts
-    sections_with_range: list[dict] = []
+    sections_with_target: list[dict] = []
     assigned = 0
     for i, sec in enumerate(sections):
         if i == len(sections) - 1:
-            # Last section gets remaining budget
-            ideal = content_budget - assigned
+            target = content_budget - assigned
         else:
-            ideal = max(1, round(sec["weight"] / total_weight * content_budget))
-        assigned += ideal
-        # Range: allow LLM ±1 from ideal, minimum 1
-        min_c = max(1, ideal - 1)
-        max_c = ideal + 1
-        sections_with_range.append({**sec, "min_count": min_c, "max_count": max_c})
+            target = max(1, round(sec["weight"] / total_weight * content_budget))
+        assigned += target
+        sections_with_target.append({**sec, "target_count": target})
 
     section_titles = [s["title"] for s in sections]
 
     # Run title, all sections, and summary concurrently
-    title_task    = asyncio.create_task(_gen_title_slide(deck_title, section_titles))
-    summary_task  = asyncio.create_task(_gen_summary_slide(deck_title, section_titles))
-    section_tasks = [asyncio.create_task(_gen_section_slides(sec)) for sec in sections_with_range]
+    # Title slide only needs the beginning of the lecture (first 2500 characters)
+    lesson_preview = lesson_content[:2500]
+
+    # Construct a smart preview covering the entire document (first 2 sentences of each section) for the Summary slide
+    summary_context_lines = []
+    for sec in all_sections:
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', sec["body"]) if s.strip()]
+        preview_text = " ".join(sentences[:2])
+        summary_context_lines.append(f"### Section: {sec['title']}\n{preview_text}")
+    summary_preview = "\n\n".join(summary_context_lines)[:3000]
+
+    title_task    = asyncio.create_task(_gen_title_slide(deck_title, section_titles, lesson_preview))
+    summary_task  = asyncio.create_task(_gen_summary_slide(deck_title, section_titles, summary_preview))
+    section_tasks = [asyncio.create_task(_gen_section_slides(sec)) for sec in sections_with_target]
 
     title_slide           = await title_task
     section_slides_nested = await asyncio.gather(*section_tasks, return_exceptions=True)
@@ -349,7 +497,8 @@ async def _build_outline(lesson_content: str, num_slides: int, deck_title: str) 
             content_slides.extend(result)
 
     all_slides = [title_slide] + content_slides + [summary_slide]
-    return _split_long_slides(all_slides)
+    validated_slides = [validate_slide_diagram(s) for s in all_slides]
+    return _split_long_slides(validated_slides)
 
 
 
