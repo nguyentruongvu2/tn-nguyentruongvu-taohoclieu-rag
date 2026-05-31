@@ -81,3 +81,9 @@ htmlcov/
 
 # Pipe/IPC
 *.sock
+
+# Local Virtual Environments (specific to development)
+venv_test/
+
+# Local databases and vector stores
+chroma_db/
