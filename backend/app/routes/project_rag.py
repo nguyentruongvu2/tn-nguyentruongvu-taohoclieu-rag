@@ -4,6 +4,8 @@ from fastapi.responses import PlainTextResponse, Response
 from typing import Any
 import json
 import logging
+import re
+import asyncio
 from ..security import get_current_user
 
 # Models
@@ -56,6 +58,7 @@ async def create_project_endpoint(
         level=request.level,
         doc_format=request.format,
         teaching_tone=request.teaching_tone,
+        syllabus_doc_id=request.syllabus_doc_id,
     )
     return ProjectCreateResponse(
         id=str(project["id"]),
@@ -66,6 +69,7 @@ async def create_project_endpoint(
         level=str(project.get("level") or "basic"),
         format=str(project.get("format") or "markdown"),
         teaching_tone=str(project.get("teaching_tone") or ""),
+        syllabus_doc_id=project.get("syllabus_doc_id"),
         created_at=str(project["created_at"]),
         updated_at=str(project.get("updated_at") or project["created_at"]),
     )
@@ -126,6 +130,7 @@ async def update_project_endpoint(
         level=request.level,
         doc_format=request.format,
         teaching_tone=request.teaching_tone,
+        syllabus_doc_id=request.syllabus_doc_id,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Project not found or access denied")
@@ -140,6 +145,7 @@ async def update_project_endpoint(
         "level": str(updated.get("level") or "basic"),
         "format": str(updated.get("format") or "markdown"),
         "teaching_tone": str(updated.get("teaching_tone") or ""),
+        "syllabus_doc_id": updated.get("syllabus_doc_id"),
         "created_at": str(updated.get("created_at") or ""),
         "updated_at": str(updated.get("updated_at") or updated.get("created_at") or ""),
         "sections_count": len(sections),
@@ -169,7 +175,7 @@ async def create_section_endpoint(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found or access denied")
 
-    prompt_value = (request.prompt or "").strip() or get_section_user_intent_hint(request.title)
+    prompt_value = (request.prompt or "").strip()
 
     created = create_editor_section(
         project_id=request.project_id,
@@ -192,6 +198,33 @@ async def delete_section_endpoint(
     return {"success": True, "section_id": section_id}
 
 
+class ReorderSectionsRequest(BaseModel):
+    section_ids: list[str]
+
+
+@router.post("/projects/{project_id}/sections/reorder")
+async def reorder_sections_endpoint(
+    project_id: str,
+    request: ReorderSectionsRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    enforce_rate_limit(current_user["id"])
+    project = get_project_for_user(project_id, current_user["id"], current_user["role"])
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
+
+    from ..db.projects import reorder_project_editor_sections
+    success = reorder_project_editor_sections(
+        project_id=project_id,
+        section_ids=request.section_ids,
+        user_id=current_user["id"],
+        role=current_user["role"],
+    )
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to update sections order")
+    return {"success": True, "message": "Sections order updated successfully"}
+
+
 @router.post("/projects/{project_id}/generate-outline")
 async def generate_project_outline_endpoint(
     project_id: str,
@@ -204,49 +237,95 @@ async def generate_project_outline_endpoint(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found or access denied")
 
-    source_ids = _normalize_kb_ids(project.get("knowledge_base_ids", []))
-    if not source_ids:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "message": "Dự án chưa có Knowledge Base. Vui lòng chọn ít nhất 1 tài liệu nguồn trước khi vào phần soạn thảo.",
-            },
+    syllabus_doc_id = project.get("syllabus_doc_id")
+    if syllabus_doc_id:
+        from ..db.documents import get_document_for_user
+        syllabus_doc = get_document_for_user(syllabus_doc_id, current_user["id"], current_user["role"])
+        if not syllabus_doc or not syllabus_doc.get("markdown"):
+            raise HTTPException(status_code=422, detail="Tài liệu Đề cương (Syllabus) không hợp lệ hoặc rỗng.")
+
+        context_text = syllabus_doc["markdown"]
+        system_prompt = (
+            "ROLE: You are an expert academic curriculum designer.\n"
+            "TASK: Extract the hierarchical syllabus outline (chapters and sub-sections) from the provided markdown document.\n\n"
+            "INSTRUCTIONS TO LOCATE DATA:\n"
+            "1. Scan the document to find the teaching schedule section. Look for semantic synonyms in Vietnamese such as:\n"
+            "   - 'Kế hoạch giảng dạy'\n"
+            "   - 'Lịch trình giảng dạy'\n"
+            "   - 'Phân phối chương trình'\n"
+            "   - 'Course plan' or 'Teaching schedule'.\n"
+            "2. Locate the table or list within this section. Look for the column that contains the actual lecture topics or chapter names. "
+            "The column header usually contains terms like:\n"
+            "   - 'Chương/Bài'\n"
+            "   - 'Nội dung'\n"
+            "   - 'Chủ đề'\n"
+            "   - 'Topic' or 'Content'.\n"
+            "3. Extract all actual theory chapters (e.g., 'Chương 1...', 'Chương 2...') and their sub-sections (e.g., '1.1...', '1.2...', '7.1.1...').\n\n"
+            "CONSTRAINTS & FILTERING:\n"
+            "- ONLY extract actual theory lecture contents.\n"
+            "- STRICTLY IGNORE practical/lab sessions ('Thực hành'), mid-term/final exams ('Thi học kỳ', 'Kiểm tra giữa kỳ'), general review sessions ('Ôn tập'), or general introductions that do not contain specific theoretical sub-topics.\n"
+            "- DO NOT alter, translate, or strip the original numbering prefixes (keep 'Chương 1', '1.1', '1.1.1' exactly as they appear in the source text).\n\n"
+            "OUTPUT FORMAT:\n"
+            "- Return pure Markdown headings only. No explanations, no introduction, no markdown blockquotes.\n"
+            "- Use absolute markdown heading levels: '#' for Chapters (Level 1), '##' for sub-sections (Level 2), and '###' for sub-sub-sections (Level 3).\n"
+            "Example:\n"
+            "# Chương 1. Tổng quan về công nghệ phần mềm\n"
+            "## 1.1 Khái niệm Công nghệ phần mềm\n"
+            "## 1.2 Phần mềm và lớp phần mềm"
         )
+        user_prompt = f"Hãy trích xuất dàn ý bài giảng lý thuyết từ Đề cương môn học sau:\n\n{context_text}"
+        if request.prompt:
+            user_prompt += f"\nYêu cầu thêm của giáo viên: {request.prompt}"
 
-    docs_owned = list_documents(current_user["id"], current_user["role"])
-    source_id_set = {str(sid) for sid in source_ids}
-    source_docs = [d for d in docs_owned if str(d.get("id")) in source_id_set]
+        raw, gemini_real_call = await asyncio.to_thread(
+            rag_pipeline.generate_with_gemini_from_markdown,
+            context_text,
+            f"{system_prompt}\n\n{user_prompt}",
+        )
+        parsed = _parse_outline_to_sections(raw)
+    else:
+        source_ids = _normalize_kb_ids(project.get("knowledge_base_ids", []))
+        if not source_ids:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "Dự án chưa có Knowledge Base. Vui lòng chọn ít nhất 1 tài liệu nguồn trước khi vào phần soạn thảo.",
+                },
+            )
 
-    if not source_docs:
-        raise HTTPException(status_code=422, detail="No source documents selected for retrieval")
+        docs_owned = list_documents(current_user["id"], current_user["role"])
+        source_id_set = {str(sid) for sid in source_ids}
+        source_docs = [d for d in docs_owned if str(d.get("id")) in source_id_set]
 
-    retrieved = await asyncio.to_thread(
-        _retrieve_context_with_retry, query=request.prompt, selected_source_docs=source_docs,
-    )
-    context_text = _build_context_text(retrieved)
-    if not context_text:
-        raise HTTPException(status_code=422, detail="Insufficient context for outline generation")
+        if not source_docs:
+            raise HTTPException(status_code=422, detail="No source documents selected for retrieval")
 
-    outline_prompt = build_outline_user_prompt(
-        document_title=str(project.get("title") or "Tài liệu chưa đặt tên"),
-        user_prompt=request.prompt,
-    )
-    system_prompt = build_project_rag_system_prompt(task="outline")
-    final_prompt = build_project_rag_combined_prompt(user_prompt=request.prompt, task_prompt=outline_prompt)
-    raw, gemini_real_call = await asyncio.to_thread(
-        rag_pipeline.generate_with_gemini_from_markdown,
-        context_text,
-        f"{system_prompt}\n\n{final_prompt}",
-    )
+        retrieved = await asyncio.to_thread(
+            _retrieve_context_with_retry, query=request.prompt, selected_source_docs=source_docs,
+        )
+        context_text = _build_context_text(retrieved)
+        if not context_text:
+            raise HTTPException(status_code=422, detail="Insufficient context for outline generation")
 
-    parsed = _normalize_teaching_outline_sections(_parse_outline_to_sections(raw))
+        outline_prompt = build_outline_user_prompt(
+            document_title=str(project.get("title") or "Tài liệu chưa đặt tên"),
+            user_prompt=request.prompt,
+        )
+        system_prompt = build_project_rag_system_prompt(task="outline")
+        final_prompt = build_project_rag_combined_prompt(user_prompt=request.prompt, task_prompt=outline_prompt)
+        raw, gemini_real_call = await asyncio.to_thread(
+            rag_pipeline.generate_with_gemini_from_markdown,
+            context_text,
+            f"{system_prompt}\n\n{final_prompt}",
+        )
+        parsed = _normalize_teaching_outline_sections(_parse_outline_to_sections(raw))
 
     replaced = replace_editor_sections(
         project_id=project_id,
         sections=[
             {
                 "title": str(item.get("title") or "").strip(),
-                "prompt": get_section_user_intent_hint(str(item.get("title") or "").strip()),
+                "prompt": "",
                 "order_index": int(item.get("order_index") or idx),
             }
             for idx, item in enumerate(parsed)
@@ -542,6 +621,101 @@ async def generate_section_endpoint(
     if not section or str(section.get("project_id")) != request.project_id:
         raise HTTPException(status_code=404, detail="Section not found")
 
+    def infer_level_from_title(title: str) -> int:
+        normalized = (title or "").strip()
+        matched = re.match(r"^(\d+(?:\.\d+)*)", normalized)
+        if not matched:
+            return 1
+        return max(1, len(matched.group(1).split(".")))
+
+    # ── 1. Intent Classifier (Prompt Router) ──────────────────────────────
+    is_structural = False
+    section_title = str(section.get("title") or "")
+    if request.prompt and request.prompt.strip():
+        classify_prompt = (
+            "Bạn là một trợ lý AI phân tích ý định (intent classifier) cho hệ thống thiết kế bài giảng.\n"
+            f"Hãy phân tích câu lệnh (prompt) sau của giáo viên đối với đề mục đang chọn: '{section_title}'\n"
+            f"Câu lệnh: '{request.prompt}'\n\n"
+            "Ý định của giáo viên thuộc loại nào trong 2 loại dưới đây:\n"
+            "1. 'structure': Giáo viên yêu cầu thay đổi cấu trúc mục lục, thêm các tiểu mục con, phân chia cấu trúc đề mục, "
+            "chèn thêm các mục nhỏ (ví dụ: 'thêm mục 1.1.1...', 'tạo tiểu mục...', 'chia nhỏ phần này...', 'thêm bài học...', "
+            "'thêm phần trắc nghiệm...', 'bổ sung mục 3.2').\n"
+            "2. 'content': Giáo viên yêu cầu soạn thảo/sinh nội dung lý thuyết chi tiết, viết bài giảng, tạo ví dụ, giải thích code, "
+            "lấy ví dụ minh họa cho đề mục hiện tại mà không làm thay đổi cấu trúc mục lục.\n\n"
+            "Chỉ trả về duy nhất từ khóa 'structure' hoặc 'content'. Không trả về thêm bất kỳ từ nào khác."
+        )
+        try:
+            raw_intent, _ = await asyncio.to_thread(
+                rag_pipeline._generate_content_with_failover,
+                classify_prompt
+            )
+            intent = raw_intent.strip().lower()
+            is_structural = "structure" in intent
+        except Exception as exc:
+            logger.warning(f"Failed to classify intent, defaulting to content: {exc}")
+
+    if is_structural:
+        current_level = infer_level_from_title(section_title)
+        structure_prompt = (
+            "Bạn là một trợ lý chuyên thiết kế cấu trúc mục lục chi tiết bài giảng.\n"
+            f"Đề mục cha hiện tại: '{section_title}' (cấp độ/level: {current_level}).\n"
+            f"Yêu cầu của giáo viên: '{request.prompt}'\n\n"
+            "Hãy phân tích yêu cầu và trả về một danh sách các đề mục con (subsections) mới cần được chèn ngay dưới đề mục cha này.\n"
+            "Mỗi đề mục con mới cần có:\n"
+            "1. Tên đề mục (title): Phải bắt đầu bằng số thứ tự phân cấp tương ứng (ví dụ: nếu đề mục cha là '1.1 Khái niệm' ở level 2, "
+            "thì đề mục con mới có thể là '1.1.1 Khái niệm cơ bản' ở level 3, '1.1.2 Các thành phần chính' ở level 3).\n"
+            "2. Cấp độ (level): Số nguyên thể hiện cấp độ phân cấp tương ứng (ví dụ: 1, 2, 3, 4).\n\n"
+            "Định dạng đầu ra BẮT BUỘC là một JSON array hợp lệ có cấu trúc như sau:\n"
+            "[\n"
+            "  {\"title\": \"1.1.1 Khái niệm cơ bản\", \"level\": 3},\n"
+            "  {\"title\": \"1.1.2 Các thành phần chính\", \"level\": 3}\n"
+            "]\n\n"
+            "Chỉ trả về chuỗi JSON hợp lệ. Không bọc trong ```json hay ```. Không thêm lời giải thích hay ký tự nào khác ngoài JSON."
+        )
+        try:
+            raw_subsections, _ = await asyncio.to_thread(
+                rag_pipeline._generate_content_with_failover,
+                structure_prompt
+            )
+            cleaned_subsections = re.sub(r"^```(?:json)?\s*", "", raw_subsections.strip(), flags=re.IGNORECASE)
+            cleaned_subsections = re.sub(r"\s*```$", "", cleaned_subsections).strip()
+            new_sections = json.loads(cleaned_subsections)
+            if not isinstance(new_sections, list):
+                new_sections = []
+        except Exception as exc:
+            logger.error(f"Failed to generate or parse subsections: {exc}")
+            new_sections = []
+
+        current_order = section.get("order_index")
+        if current_order is None:
+            current_order = 0
+
+        for idx, ns in enumerate(new_sections):
+            title = ns.get("title", "").strip()
+            if not title:
+                continue
+            create_editor_section(
+                project_id=request.project_id,
+                title=title,
+                prompt="",
+                order_index=current_order + 1 + idx
+            )
+
+        all_sections = list_editor_sections(request.project_id)
+        return {
+            "success": True,
+            "is_structure_update": True,
+            "project_id": request.project_id,
+            "sections": [
+                {
+                    **s,
+                    "level": infer_level_from_title(s.get("title") or "")
+                }
+                for s in all_sections
+            ]
+        }
+
+    # ── 2. Content Generation Flow ────────────────────────────────────────
     source_ids = _normalize_kb_ids(project.get("knowledge_base_ids", []))
     if not source_ids:
         raise HTTPException(
@@ -558,7 +732,6 @@ async def generate_section_endpoint(
     if not source_docs:
         raise HTTPException(status_code=422, detail="No source documents selected for retrieval")
 
-    section_title = str(section.get("title") or "")
     retrieval_profile = get_retrieval_profile(section_title)
     is_main_content = retrieval_profile.key == "main_content"
 
@@ -584,6 +757,27 @@ async def generate_section_endpoint(
             f"{lesson_title}\n{section_title}\n{request.prompt}\n"
             "tổng hợp đầy đủ ý chính, khái niệm cốt lõi, mục tiêu, nội dung chính, ví dụ minh họa, ứng dụng thực tế, kết luận"
         )
+
+    # ── English Document RAG Flow: Query Translation ───────────────────
+    def contains_vietnamese(text: str) -> bool:
+        vietnamese_chars = re.compile(r'[àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệđìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵÀÁẢÃẠÂẦẤẨẪẬĂẰẮẲẴẶÈÉẺẼẸÊỀẾỂỄỆĐÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴ]')
+        return bool(vietnamese_chars.search(text))
+
+    try:
+        if contains_vietnamese(retrieve_query):
+            translation_prompt = (
+                "Translate the following search query from Vietnamese to English to optimize for semantic vector search in English software engineering books. "
+                "Return only the English translation. Do not include any notes, explanations, or quotes.\n\n"
+                f"Query: {retrieve_query}"
+            )
+            raw_translation, _ = await asyncio.to_thread(
+                rag_pipeline._generate_content_with_failover,
+                translation_prompt
+            )
+            if raw_translation and raw_translation.strip():
+                retrieve_query = raw_translation.strip()
+    except Exception as exc:
+        logger.warning(f"Failed to translate query to English, using original: {exc}")
 
     def _do_section_retrieval() -> list[dict[str, Any]]:
         """Sync helper — runs on thread pool via asyncio.to_thread."""
@@ -742,6 +936,7 @@ async def generate_section_endpoint(
         "- Do NOT include headings belonging to other sections\n"
         "- Do NOT output audit/verification scaffolding (Phase 1/2/3, Content Type, Verdict)\n"
         "- Return only Vietnamese Markdown content grounded in provided context\n"
+        "- Translate any relevant English concepts to Vietnamese, but keep the original English technical terms in parentheses next to them (e.g., Phương pháp Agile (Agile methodology), Kiến trúc hướng dịch vụ (Service-oriented architecture), Sơ đồ tuần tự (Sequence diagram)).\n"
         "- If context is insufficient, return exactly: NOT_ENOUGH_CONTEXT"
     )
     final_prompt = build_project_rag_combined_prompt(
@@ -824,6 +1019,18 @@ async def generate_section_endpoint(
     if not updated:
         raise HTTPException(status_code=404, detail="Section not found")
 
+    # ── Log generation history ───────────────────────────────────────────
+    if not sentinel:
+        try:
+            add_editor_section_history(
+                project_id=request.project_id,
+                section_id=request.section_id,
+                prompt=request.prompt,
+                content_markdown=content,
+            )
+        except Exception as exc:
+            logger.error(f"Failed to save editor section history: {exc}")
+
     return {
         "success": True,
         "project_id": request.project_id,
@@ -869,6 +1076,18 @@ async def update_section_endpoint(
         raise HTTPException(status_code=404, detail="Section not found")
 
     return {"success": True, "section": updated}
+
+
+@router.get("/sections/{section_id}")
+async def get_section_endpoint(
+    section_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    enforce_rate_limit(current_user["id"])
+    section = get_editor_section_for_user(section_id, current_user["id"], current_user["role"])
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+    return {"success": True, "section": section}
 
 
 @router.get("/projects/{project_id}/export/md")
@@ -1018,3 +1237,69 @@ async def export_document_endpoint(
             )
         },
     )
+
+
+# ── Prompt History & Reversion ──────────────────────────────────────────────
+
+from pydantic import BaseModel
+
+class RestoreHistoryRequest(BaseModel):
+    history_id: int
+
+
+@router.get("/projects/{project_id}/sections/{section_id}/history")
+async def get_section_history_endpoint(
+    project_id: str,
+    section_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    enforce_rate_limit(current_user["id"])
+    project = get_project_for_user(project_id, current_user["id"], current_user["role"])
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
+
+    section = get_editor_section_for_user(section_id, current_user["id"], current_user["role"])
+    if not section or str(section.get("project_id")) != project_id:
+        raise HTTPException(status_code=404, detail="Section not found")
+
+    history_entries = list_editor_section_history(project_id, section_id)
+    return {
+        "success": True,
+        "history": history_entries
+    }
+
+
+@router.post("/projects/{project_id}/sections/{section_id}/history/restore")
+async def restore_section_history_endpoint(
+    project_id: str,
+    section_id: str,
+    request: RestoreHistoryRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    enforce_rate_limit(current_user["id"])
+    project = get_project_for_user(project_id, current_user["id"], current_user["role"])
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
+
+    section = get_editor_section_for_user(section_id, current_user["id"], current_user["role"])
+    if not section or str(section.get("project_id")) != project_id:
+        raise HTTPException(status_code=404, detail="Section not found")
+
+    entry = get_editor_section_history_entry(request.history_id)
+    if not entry or str(entry.get("project_id")) != project_id or str(entry.get("section_id")) != section_id:
+        raise HTTPException(status_code=404, detail="Lịch sử không tồn tại hoặc không hợp lệ")
+
+    updated = update_editor_section(
+        section_id=section_id,
+        user_id=current_user["id"],
+        role=current_user["role"],
+        content_markdown=entry["content_markdown"],
+        prompt=entry["prompt"]
+    )
+    if not updated:
+         raise HTTPException(status_code=500, detail="Không thể khôi phục section")
+
+    return {
+        "success": True,
+        "section": updated
+    }

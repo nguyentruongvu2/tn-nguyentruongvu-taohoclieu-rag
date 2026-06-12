@@ -55,6 +55,9 @@ from ..db.projects import (
     replace_editor_sections,
     get_editor_section_for_user,
     update_editor_section,
+    add_editor_section_history,
+    list_editor_section_history,
+    get_editor_section_history_entry,
 )
 from ..db.documents import (
     list_documents,
@@ -101,6 +104,7 @@ class ProjectCreateRequest(BaseModel):
     level: str = "basic"
     format: str = "markdown"
     teaching_tone: str = ""  # "" | "academic" | "inspiring" | "practical"
+    syllabus_doc_id: str | None = None
 
 
 class ProjectCreateResponse(BaseModel):
@@ -112,6 +116,7 @@ class ProjectCreateResponse(BaseModel):
     level: str
     format: str
     teaching_tone: str = ""
+    syllabus_doc_id: str | None = None
     created_at: str
     updated_at: str
 
@@ -123,6 +128,7 @@ class ProjectUpdateRequest(BaseModel):
     level: str | None = None
     format: str | None = None
     teaching_tone: str | None = None  # "" | "academic" | "inspiring" | "practical"
+    syllabus_doc_id: str | None = None
 
 
 class SectionPayload(BaseModel):
@@ -288,6 +294,16 @@ def _normalize_kb_ids(raw_ids: Any) -> list[str]:
     return normalized
 
 
+def infer_level_from_title(title: str) -> int:
+    normalized = (title or "").strip()
+    if normalized.lower().startswith("chương") or normalized.lower().startswith("chuong"):
+        return 1
+    matched = re.match(r"^(\d+(?:\.\d+)*)", normalized)
+    if not matched:
+        return 1
+    return max(1, len(matched.group(1).split(".")))
+
+
 def _render_project_markdown(project: dict[str, Any]) -> str:
     sections = _project_sections_sorted(project)
     lines = [f"# {project['title']}", ""]
@@ -295,7 +311,10 @@ def _render_project_markdown(project: dict[str, Any]) -> str:
         lines.extend([_strip_source_citations_for_export(str(project.get("description") or "")), ""])
 
     for section in sections:
-        lines.append(f"## {section.get('title')}")
+        title = section.get('title') or ""
+        level = infer_level_from_title(title)
+        hashes = "#" * (level + 1)
+        lines.append(f"{hashes} {title}")
         lines.append("")
         lines.append(_strip_source_citations_for_export(str(section.get("content_markdown") or "")))
         lines.append("")
@@ -304,6 +323,7 @@ def _render_project_markdown(project: dict[str, Any]) -> str:
 
 
 _PROJECT_EXPORT_PDF_FONT = ""
+_PROJECT_EXPORT_PDF_MONO_FONT = ""
 
 
 def _load_reportlab_runtime() -> tuple[Any, Any, Any, Any] | None:
@@ -318,7 +338,7 @@ def _load_reportlab_runtime() -> tuple[Any, Any, Any, Any] | None:
     return pagesizes_module.A4, pdfmetrics_module, ttfonts_module.TTFont, canvas_module
 
 
-def _resolve_pdf_font_name(pdfmetrics_module: Any, ttfont_cls: Any) -> str:
+def _register_font_family(pdfmetrics_module: Any, ttfont_cls: Any) -> str:
     global _PROJECT_EXPORT_PDF_FONT
     if _PROJECT_EXPORT_PDF_FONT:
         return _PROJECT_EXPORT_PDF_FONT
@@ -326,25 +346,136 @@ def _resolve_pdf_font_name(pdfmetrics_module: Any, ttfont_cls: Any) -> str:
     fallback_font = "Helvetica"
 
     font_candidates = [
-        Path("C:/Windows/Fonts/arial.ttf"),
-        Path("C:/Windows/Fonts/tahoma.ttf"),
-        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
-        Path("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"),
-        Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
+        # Name, Regular, Bold, Italic, BoldItalic
+        ("RAGTimes", "C:/Windows/Fonts/times.ttf", "C:/Windows/Fonts/timesbd.ttf", "C:/Windows/Fonts/timesi.ttf", "C:/Windows/Fonts/timesbi.ttf"),
+        ("RAGArial", "C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/arialbd.ttf", "C:/Windows/Fonts/ariali.ttf", "C:/Windows/Fonts/arialbi.ttf"),
+        ("RAGDejaVu", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf"),
+        ("RAGNoto", "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf", "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf", "/usr/share/fonts/truetype/noto/NotoSans-Italic.ttf", "/usr/share/fonts/truetype/noto/NotoSans-BoldItalic.ttf"),
+        ("RAGLiberation", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-BoldItalic.ttf"),
     ]
 
-    for candidate in font_candidates:
-        if not candidate.exists():
-            continue
-        try:
-            pdfmetrics_module.registerFont(ttfont_cls("RAGUnicode", str(candidate)))
-            _PROJECT_EXPORT_PDF_FONT = "RAGUnicode"
-            return _PROJECT_EXPORT_PDF_FONT
-        except Exception:
-            continue
+    for name, reg, bold, ital, bold_ital in font_candidates:
+        if Path(reg).exists():
+            try:
+                pdfmetrics_module.registerFont(ttfont_cls(name, reg))
+                
+                bold_name = f"{name}-Bold"
+                if Path(bold).exists():
+                    pdfmetrics_module.registerFont(ttfont_cls(bold_name, bold))
+                else:
+                    bold_name = name
+                    
+                ital_name = f"{name}-Italic"
+                if Path(ital).exists():
+                    pdfmetrics_module.registerFont(ttfont_cls(ital_name, ital))
+                else:
+                    ital_name = name
+                    
+                bi_name = f"{name}-BoldItalic"
+                if Path(bold_ital).exists():
+                    pdfmetrics_module.registerFont(ttfont_cls(bi_name, bold_ital))
+                else:
+                    bi_name = bold_name
+                
+                pdfmetrics_module.registerFontFamily(
+                    name,
+                    normal=name,
+                    bold=bold_name,
+                    italic=ital_name,
+                boldItalic=bi_name
+                )
+                _PROJECT_EXPORT_PDF_FONT = name
+                return _PROJECT_EXPORT_PDF_FONT
+            except Exception:
+                continue
 
     _PROJECT_EXPORT_PDF_FONT = fallback_font
     return _PROJECT_EXPORT_PDF_FONT
+
+
+def _register_mono_font_family(pdfmetrics_module: Any, ttfont_cls: Any) -> str:
+    global _PROJECT_EXPORT_PDF_MONO_FONT
+    if _PROJECT_EXPORT_PDF_MONO_FONT:
+        return _PROJECT_EXPORT_PDF_MONO_FONT
+
+    fallback_font = "Courier"
+
+    font_candidates = [
+        # Name, Regular, Bold, Italic, BoldItalic
+        ("RAGCourierNew", "C:/Windows/Fonts/cour.ttf", "C:/Windows/Fonts/courbd.ttf", "C:/Windows/Fonts/couri.ttf", "C:/Windows/Fonts/courbi.ttf"),
+        ("RAGDejaVuMono", "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Oblique.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-BoldOblique.ttf"),
+        ("RAGLiberationMono", "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf", "/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf", "/usr/share/fonts/truetype/liberation/LiberationMono-Italic.ttf", "/usr/share/fonts/truetype/liberation/LiberationMono-BoldItalic.ttf"),
+    ]
+
+    for name, reg, bold, ital, bold_ital in font_candidates:
+        if Path(reg).exists():
+            try:
+                pdfmetrics_module.registerFont(ttfont_cls(name, reg))
+                
+                bold_name = f"{name}-Bold"
+                if Path(bold).exists():
+                    pdfmetrics_module.registerFont(ttfont_cls(bold_name, bold))
+                else:
+                    bold_name = name
+                    
+                ital_name = f"{name}-Italic"
+                if Path(ital).exists():
+                    pdfmetrics_module.registerFont(ttfont_cls(ital_name, ital))
+                else:
+                    ital_name = name
+                    
+                bi_name = f"{name}-BoldItalic"
+                if Path(bold_ital).exists():
+                    pdfmetrics_module.registerFont(ttfont_cls(bi_name, bold_ital))
+                else:
+                    bi_name = bold_name
+                
+                pdfmetrics_module.registerFontFamily(
+                    name,
+                    normal=name,
+                    bold=bold_name,
+                    italic=ital_name,
+                    boldItalic=bi_name
+                )
+                _PROJECT_EXPORT_PDF_MONO_FONT = name
+                return _PROJECT_EXPORT_PDF_MONO_FONT
+            except Exception:
+                continue
+
+    global _PROJECT_EXPORT_PDF_FONT
+    if _PROJECT_EXPORT_PDF_FONT and _PROJECT_EXPORT_PDF_FONT != "Helvetica":
+        _PROJECT_EXPORT_PDF_MONO_FONT = _PROJECT_EXPORT_PDF_FONT
+    else:
+        _PROJECT_EXPORT_PDF_MONO_FONT = fallback_font
+
+    return _PROJECT_EXPORT_PDF_MONO_FONT
+
+
+def _get_mermaid_diagram_image(code: str) -> bytes | None:
+    import urllib.request
+    import urllib.error
+    import base64
+    import json
+    
+    try:
+        data = {
+            "code": code.strip(),
+            "mermaid": {"theme": "default"}
+        }
+        json_str = json.dumps(data)
+        b64 = base64.urlsafe_b64encode(json_str.encode('utf-8')).decode('utf-8').rstrip('=')
+        url = f"https://mermaid.ink/img/{b64}"
+        
+        req = urllib.request.Request(
+            url,
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        )
+        with urllib.request.urlopen(req, timeout=5.0) as response:
+            if response.status == 200:
+                return response.read()
+    except Exception:
+        pass
+    return None
 
 
 def _wrap_pdf_text_line(
@@ -377,72 +508,467 @@ def _wrap_pdf_text_line(
 
 
 def _render_project_pdf_bytes(project: dict[str, Any]) -> bytes:
+    import html
+    import re
+    import importlib
+    
     reportlab_runtime = _load_reportlab_runtime()
     if reportlab_runtime is None:
         raise RuntimeError("PDF export dependency is not available")
 
     a4_pagesize, pdfmetrics_module, ttfont_cls, canvas_module = reportlab_runtime
+    font_name = _register_font_family(pdfmetrics_module, ttfont_cls)
+    mono_font_name = _register_mono_font_family(pdfmetrics_module, ttfont_cls)
+
+    try:
+        platypus_module = importlib.import_module("reportlab.platypus")
+        SimpleDocTemplate = platypus_module.SimpleDocTemplate
+        Paragraph = platypus_module.Paragraph
+        Spacer = platypus_module.Spacer
+        Table = platypus_module.Table
+        TableStyle = platypus_module.TableStyle
+        PageBreak = platypus_module.PageBreak
+        KeepTogether = platypus_module.KeepTogether
+        
+        styles_module = importlib.import_module("reportlab.lib.styles")
+        getSampleStyleSheet = styles_module.getSampleStyleSheet
+        ParagraphStyle = styles_module.ParagraphStyle
+        
+        colors_module = importlib.import_module("reportlab.lib.colors")
+        HexColor = colors_module.HexColor
+    except Exception as exc:
+        raise RuntimeError(f"Failed to load ReportLab Platypus components: {exc}")
 
     markdown = _render_project_markdown(project)
-    font_name = _resolve_pdf_font_name(pdfmetrics_module, ttfont_cls)
     stream = BytesIO()
-    pdf = canvas_module.Canvas(stream, pagesize=a4_pagesize)
-
+    
     page_width, page_height = a4_pagesize
     margin_left = 44
     margin_right = 44
     margin_top = 48
     margin_bottom = 44
     max_width = page_width - margin_left - margin_right
-    y = page_height - margin_top
+    
+    styles = getSampleStyleSheet()
+    
+    body_style = ParagraphStyle(
+        'PDFBodyText',
+        parent=styles['Normal'],
+        fontName=font_name,
+        fontSize=10,
+        leading=14,
+        textColor=HexColor("#334155"),
+        spaceAfter=6
+    )
+    
+    h1_style = ParagraphStyle(
+        'PDFH1',
+        parent=styles['Heading1'],
+        fontName=f"{font_name}-Bold" if font_name != "Helvetica" else "Helvetica-Bold",
+        fontSize=18,
+        leading=22,
+        textColor=HexColor("#1e3a8a"),
+        spaceBefore=14,
+        spaceAfter=10,
+        keepWithNext=True
+    )
+    
+    h2_style = ParagraphStyle(
+        'PDFH2',
+        parent=styles['Heading2'],
+        fontName=f"{font_name}-Bold" if font_name != "Helvetica" else "Helvetica-Bold",
+        fontSize=14,
+        leading=18,
+        textColor=HexColor("#0f766e"),
+        spaceBefore=12,
+        spaceAfter=8,
+        keepWithNext=True
+    )
+    
+    h3_style = ParagraphStyle(
+        'PDFH3',
+        parent=styles['Heading3'],
+        fontName=f"{font_name}-Bold" if font_name != "Helvetica" else "Helvetica-Bold",
+        fontSize=12,
+        leading=15,
+        textColor=HexColor("#1e293b"),
+        spaceBefore=10,
+        spaceAfter=6,
+        keepWithNext=True
+    )
+    
+    h4_style = ParagraphStyle(
+        'PDFH4',
+        parent=styles['Heading3'],
+        fontName=f"{font_name}-Bold" if font_name != "Helvetica" else "Helvetica-Bold",
+        fontSize=11,
+        leading=14,
+        textColor=HexColor("#334155"),
+        spaceBefore=8,
+        spaceAfter=4,
+        keepWithNext=True
+    )
+    
+    h5_style = ParagraphStyle(
+        'PDFH5',
+        parent=styles['Heading3'],
+        fontName=f"{font_name}-Bold" if font_name != "Helvetica" else "Helvetica-Bold",
+        fontSize=10,
+        leading=13,
+        textColor=HexColor("#475569"),
+        spaceBefore=6,
+        spaceAfter=3,
+        keepWithNext=True
+    )
+    
+    list_style = ParagraphStyle(
+        'PDFListStyle',
+        parent=body_style,
+        leftIndent=18,
+        firstLineIndent=-10,
+        spaceAfter=4
+    )
+    
+    def _inline_markdown_to_html(text: str) -> str:
+        escaped = html.escape(text)
+        escaped = re.sub(r'`(.*?)`', f'<font face="{mono_font_name}" color="#c7254e"><b>\\1</b></font>', escaped)
+        escaped = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', escaped)
+        escaped = re.sub(r'\*(.*?)\*', r'<i>\1</i>', escaped)
+        return escaped
 
-    def ensure_space(required_height: float) -> None:
-        nonlocal y
-        if y - required_height < margin_bottom:
-            pdf.showPage()
-            y = page_height - margin_top
+    blocks = []
+    lines = markdown.splitlines()
+    in_code_block = False
+    code_content = []
+    current_block_type = None
+    current_block_lines = []
 
-    for raw_line in markdown.splitlines():
-        stripped = raw_line.strip()
-        if not stripped:
-            ensure_space(8)
-            y -= 8
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        
+        if line.strip().startswith("```"):
+            if in_code_block:
+                if code_lang == "mermaid":
+                    img_bytes = _get_mermaid_diagram_image("\n".join(code_content))
+                    if img_bytes:
+                        blocks.append({
+                            "type": "mermaid_image",
+                            "content": img_bytes
+                        })
+                    else:
+                        blocks.append({
+                            "type": "code",
+                            "lang": "mermaid",
+                            "content": "\n".join(code_content)
+                        })
+                else:
+                    blocks.append({
+                        "type": "code",
+                        "lang": code_lang,
+                        "content": "\n".join(code_content)
+                    })
+                code_content = []
+                in_code_block = False
+            else:
+                if current_block_lines:
+                    blocks.append({
+                        "type": current_block_type or "paragraph",
+                        "lines": current_block_lines
+                    })
+                    current_block_lines = []
+                    current_block_type = None
+                in_code_block = True
+                code_lang = line.strip()[3:].strip().lower()
+            i += 1
             continue
 
-        text = stripped
-        font_size = 11
-        line_height = 15
+        if in_code_block:
+            code_content.append(line)
+            i += 1
+            continue
 
-        if stripped.startswith("# "):
-            text = stripped[2:].strip()
-            font_size = 16
-            line_height = 21
-        elif stripped.startswith("## "):
-            text = stripped[3:].strip()
-            font_size = 13
-            line_height = 18
-        elif stripped.startswith("### "):
-            text = stripped[4:].strip()
-            font_size = 12
-            line_height = 17
-
-        wrapped_lines = _wrap_pdf_text_line(
-            text,
-            font_name,
-            font_size,
-            max_width,
-            pdfmetrics_module,
-        )
-        for line in wrapped_lines:
-            ensure_space(line_height)
-            pdf.setFont(font_name, font_size)
-            pdf.drawString(margin_left, y, line)
-            y -= line_height
+        stripped = line.strip()
+        if not stripped:
+            if current_block_lines:
+                blocks.append({
+                    "type": current_block_type or "paragraph",
+                    "lines": current_block_lines
+                })
+                current_block_lines = []
+                current_block_type = None
+            i += 1
+            continue
 
         if stripped.startswith("#"):
-            y -= 4
+            if current_block_lines:
+                blocks.append({
+                    "type": current_block_type or "paragraph",
+                    "lines": current_block_lines
+                })
+                current_block_lines = []
+            
+            level = 0
+            while level < len(stripped) and stripped[level] == '#':
+                level += 1
+            content = stripped[level:].strip()
+            blocks.append({
+                "type": f"h{level}",
+                "content": content
+            })
+            current_block_type = None
+            i += 1
+            continue
 
-    pdf.save()
+        if stripped.startswith(">") or stripped.startswith("[!NOTE]"):
+            if current_block_type not in {"blockquote", "note"} and current_block_lines:
+                blocks.append({
+                    "type": current_block_type or "paragraph",
+                    "lines": current_block_lines
+                })
+                current_block_lines = []
+            
+            if stripped.startswith("[!NOTE]"):
+                current_block_type = "note"
+                content = stripped[7:].strip()
+            elif stripped.startswith("> [!NOTE]"):
+                current_block_type = "note"
+                content = stripped[9:].strip()
+            else:
+                current_block_type = "blockquote"
+                content = stripped[1:].strip()
+            
+            current_block_lines.append(content)
+            i += 1
+            continue
+
+        if stripped.startswith("|"):
+            if current_block_type != "table" and current_block_lines:
+                blocks.append({
+                    "type": current_block_type or "paragraph",
+                    "lines": current_block_lines
+                })
+                current_block_lines = []
+            current_block_type = "table"
+            current_block_lines.append(stripped)
+            i += 1
+            continue
+
+        is_bullet = stripped.startswith("- ") or stripped.startswith("* ") or stripped.startswith("+ ")
+        is_numbered = re.match(r"^\d+\.\s+", stripped) is not None
+
+        if is_bullet or is_numbered:
+            if current_block_type != "list" and current_block_lines:
+                blocks.append({
+                    "type": current_block_type or "paragraph",
+                    "lines": current_block_lines
+                })
+                current_block_lines = []
+            current_block_type = "list"
+            current_block_lines.append(stripped)
+            i += 1
+            continue
+
+        if current_block_type in {"h1", "h2", "h3", "table", "list", "blockquote", "note"} and current_block_lines:
+            blocks.append({
+                "type": current_block_type,
+                "lines": current_block_lines
+            })
+            current_block_lines = []
+            current_block_type = "paragraph"
+
+        current_block_type = "paragraph"
+        current_block_lines.append(line)
+        i += 1
+
+    if current_block_lines:
+        blocks.append({
+            "type": current_block_type or "paragraph",
+            "lines": current_block_lines
+        })
+    elif in_code_block and code_content:
+        blocks.append({
+            "type": "code",
+            "content": "\n".join(code_content)
+        })
+
+    flowables = []
+    doc = SimpleDocTemplate(
+        stream,
+        pagesize=a4_pagesize,
+        leftMargin=margin_left,
+        rightMargin=margin_right,
+        topMargin=margin_top,
+        bottomMargin=margin_bottom
+    )
+
+    for block in blocks:
+        b_type = block["type"]
+        
+        if b_type == "h1":
+            flowables.append(Paragraph(_inline_markdown_to_html(block["content"]), h1_style))
+        elif b_type == "h2":
+            flowables.append(Paragraph(_inline_markdown_to_html(block["content"]), h2_style))
+        elif b_type == "h3":
+            flowables.append(Paragraph(_inline_markdown_to_html(block["content"]), h3_style))
+        elif b_type == "h4":
+            flowables.append(Paragraph(_inline_markdown_to_html(block["content"]), h4_style))
+        elif b_type == "h5" or (b_type.startswith("h") and b_type[1:].isdigit()):
+            flowables.append(Paragraph(_inline_markdown_to_html(block["content"]), h5_style))
+            
+        elif b_type == "paragraph":
+            text = " ".join([l.strip() for l in block["lines"]])
+            flowables.append(Paragraph(_inline_markdown_to_html(text), body_style))
+            
+        elif b_type == "code":
+            code_style = ParagraphStyle(
+                'PDFCodeStyle',
+                parent=body_style,
+                fontName=mono_font_name,
+                fontSize=8.5,
+                leading=11,
+                textColor=HexColor("#0f172a")
+            )
+            code_escaped = html.escape(block["content"]).replace("\n", "<br/>").replace(" ", "&nbsp;")
+            p = Paragraph(code_escaped, code_style)
+            tbl_style = TableStyle([
+                ('BACKGROUND', (0,0), (-1,-1), HexColor("#f1f5f9")),
+                ('PADDING', (0,0), (-1,-1), 8),
+                ('BOX', (0,0), (-1,-1), 0.5, HexColor("#cbd5e1")),
+            ])
+            t = Table([[p]], colWidths=[max_width])
+            t.setStyle(tbl_style)
+            flowables.append(t)
+            flowables.append(Spacer(1, 8))
+            
+        elif b_type == "mermaid_image":
+            try:
+                from PIL import Image as PILImage
+                from reportlab.platypus import Image as RLImage
+                
+                img_data = BytesIO(block["content"])
+                pil_img = PILImage.open(img_data)
+                w, h = pil_img.size
+                
+                if w > max_width:
+                    h = int(h * (max_width / w))
+                    w = int(max_width)
+                
+                img_data.seek(0)
+                flowables.append(RLImage(img_data, width=w, height=h))
+                flowables.append(Spacer(1, 8))
+            except Exception:
+                pass
+            
+        elif b_type in {"blockquote", "note"}:
+            is_note = b_type == "note"
+            note_style = ParagraphStyle(
+                'PDFNoteStyle',
+                parent=body_style,
+                fontSize=9.5,
+                leading=13,
+                textColor=HexColor("#1e3a8a") if is_note else HexColor("#334155")
+            )
+            note_text = "<br/>".join([_inline_markdown_to_html(line) for line in block["lines"]])
+            p = Paragraph(note_text, note_style)
+            tbl_style = TableStyle([
+                ('BACKGROUND', (0,0), (-1,-1), HexColor("#eff6ff") if is_note else HexColor("#f8fafc")),
+                ('LEFTPADDING', (0,0), (-1,-1), 12),
+                ('RIGHTPADDING', (0,0), (-1,-1), 12),
+                ('TOPPADDING', (0,0), (-1,-1), 8),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+                ('LINELEFT', (0,0), (0,-1), 3, HexColor("#2563eb") if is_note else HexColor("#94a3b8")),
+                ('LINEBELOW', (0,0), (-1,-1), 0, colors_module.transparent),
+                ('LINEABOVE', (0,0), (-1,-1), 0, colors_module.transparent),
+                ('LINERIGHT', (0,0), (-1,-1), 0, colors_module.transparent),
+            ])
+            t = Table([[p]], colWidths=[max_width])
+            t.setStyle(tbl_style)
+            flowables.append(t)
+            flowables.append(Spacer(1, 8))
+            
+        elif b_type == "list":
+            for line in block["lines"]:
+                stripped = line.strip()
+                is_bullet = stripped.startswith("- ") or stripped.startswith("* ") or stripped.startswith("+ ")
+                
+                if is_bullet:
+                    prefix = "&bull; "
+                    content = stripped[2:].strip()
+                else:
+                    match = re.match(r"^(\d+\.\s+)(.*)$", stripped)
+                    if match:
+                        prefix = match.group(1)
+                        content = match.group(2).strip()
+                    else:
+                        prefix = "&bull; "
+                        content = stripped
+                        
+                flowables.append(Paragraph(f"{prefix}{_inline_markdown_to_html(content)}", list_style))
+            flowables.append(Spacer(1, 6))
+            
+        elif b_type == "table":
+            table_data = []
+            for line in block["lines"]:
+                if re.match(r"^\|?\s*:?-+:?\s*(\|?\s*:?-+:?\s*)*\|?$", line):
+                    continue
+                parts = [p.strip() for p in line.split("|")]
+                if parts and not parts[0]:
+                    parts.pop(0)
+                if parts and not parts[-1]:
+                    parts.pop()
+                if parts:
+                    table_data.append(parts)
+            
+            if table_data:
+                cell_style = ParagraphStyle(
+                    'PDFTableCellStyle',
+                    parent=body_style,
+                    fontSize=9,
+                    leading=12
+                )
+                header_style = ParagraphStyle(
+                    'PDFTableHeaderCellStyle',
+                    parent=body_style,
+                    fontSize=9,
+                    leading=12,
+                    fontName=f"{font_name}-Bold" if font_name != "Helvetica" else "Helvetica-Bold",
+                    textColor=HexColor("#1e293b")
+                )
+
+                formatted_data = []
+                for row_idx, row in enumerate(table_data):
+                    formatted_row = []
+                    for cell in row:
+                        cell_html = _inline_markdown_to_html(cell)
+                        if row_idx == 0:
+                            formatted_row.append(Paragraph(cell_html, header_style))
+                        else:
+                            formatted_row.append(Paragraph(cell_html, cell_style))
+                    formatted_data.append(formatted_row)
+                
+                num_cols = len(table_data[0])
+                col_width = max_width / max(1, num_cols)
+                col_widths = [col_width] * num_cols
+                
+                t_style = TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), HexColor("#f8fafc")),
+                    ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                    ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                    ('GRID', (0,0), (-1,-1), 0.5, HexColor("#e2e8f0")),
+                    ('TOPPADDING', (0,0), (-1,-1), 5),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+                    ('LEFTPADDING', (0,0), (-1,-1), 6),
+                    ('RIGHTPADDING', (0,0), (-1,-1), 6),
+                ])
+                
+                t = Table(formatted_data, colWidths=col_widths)
+                t.setStyle(t_style)
+                
+                flowables.append(KeepTogether([t]))
+                flowables.append(Spacer(1, 8))
+
+    doc.build(flowables)
     stream.seek(0)
     return stream.getvalue()
 
@@ -450,26 +976,465 @@ def _render_project_pdf_bytes(project: dict[str, Any]) -> bytes:
 def _render_project_docx_bytes(project: dict[str, Any]) -> bytes:
     if DocxDocument is None:
         raise RuntimeError("DOCX export dependency is not available")
+    
+    import re
+    from io import BytesIO
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
 
-    document = DocxDocument()
-    project_title = str(project.get("title") or "Bài giảng").strip() or "Bài giảng"
-    project_description = str(project.get("description") or "").strip()
-    document.add_heading(project_title, level=0)
-    if project_description:
-        document.add_paragraph(project_description)
+    markdown = _render_project_markdown(project)
 
-    for section in _project_sections_sorted(project):
-        section_title = str(section.get("title") or "Mục chưa đặt tên").strip() or "Mục chưa đặt tên"
-        section_content = _strip_source_citations_for_export(
-            str(section.get("content_markdown") or ""),
-        )
+    def add_formatted_text(p, text, force_bold=False, force_italic=False, force_color=None):
+        parts = re.split(r'(\*\*.*?\*\*|\*.*?\*|`.*?`)', text)
+        for part in parts:
+            if not part:
+                continue
+            if part.startswith('**') and part.endswith('**'):
+                run = p.add_run(part[2:-2])
+                run.bold = True
+                if force_italic:
+                    run.italic = True
+                if force_color:
+                    run.font.color.rgb = force_color
+            elif part.startswith('*') and part.endswith('*'):
+                run = p.add_run(part[1:-1])
+                run.italic = True
+                if force_bold:
+                    run.bold = True
+                if force_color:
+                    run.font.color.rgb = force_color
+            elif part.startswith('`') and part.endswith('`'):
+                run = p.add_run(part[1:-1])
+                run.font.name = 'Courier New'
+                run.font.size = Pt(9.5)
+                if force_bold:
+                    run.bold = True
+                if force_italic:
+                    run.italic = True
+                if force_color:
+                    run.font.color.rgb = force_color
+            else:
+                run = p.add_run(part)
+                if force_bold:
+                    run.bold = True
+                if force_italic:
+                    run.italic = True
+                if force_color:
+                    run.font.color.rgb = force_color
 
-        document.add_heading(section_title, level=1)
-        if not section_content:
+    blocks = []
+    lines = markdown.splitlines()
+    in_code_block = False
+    code_content = []
+    current_block_type = None
+    current_block_lines = []
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.strip().startswith("```"):
+            if in_code_block:
+                if code_lang == "mermaid":
+                    img_bytes = _get_mermaid_diagram_image("\n".join(code_content))
+                    if img_bytes:
+                        blocks.append({
+                            "type": "mermaid_image",
+                            "content": img_bytes
+                        })
+                    else:
+                        blocks.append({
+                            "type": "code",
+                            "lang": "mermaid",
+                            "content": "\n".join(code_content)
+                        })
+                else:
+                    blocks.append({
+                        "type": "code",
+                        "lang": code_lang,
+                        "content": "\n".join(code_content)
+                    })
+                code_content = []
+                in_code_block = False
+            else:
+                if current_block_lines:
+                    blocks.append({
+                        "type": current_block_type or "paragraph",
+                        "lines": current_block_lines
+                    })
+                    current_block_lines = []
+                    current_block_type = None
+                in_code_block = True
+                code_lang = line.strip()[3:].strip().lower()
+            i += 1
             continue
 
-        for paragraph in [item.strip() for item in section_content.split("\n\n") if item.strip()]:
-            document.add_paragraph(paragraph)
+        if in_code_block:
+            code_content.append(line)
+            i += 1
+            continue
+
+        stripped = line.strip()
+        if not stripped:
+            if current_block_lines:
+                blocks.append({
+                    "type": current_block_type or "paragraph",
+                    "lines": current_block_lines
+                })
+                current_block_lines = []
+                current_block_type = None
+            i += 1
+            continue
+
+        if stripped.startswith("#"):
+            if current_block_lines:
+                blocks.append({
+                    "type": current_block_type or "paragraph",
+                    "lines": current_block_lines
+                })
+                current_block_lines = []
+            
+            level = 0
+            while level < len(stripped) and stripped[level] == '#':
+                level += 1
+            content = stripped[level:].strip()
+            blocks.append({
+                "type": f"h{level}",
+                "content": content
+            })
+            current_block_type = None
+            i += 1
+            continue
+
+        if stripped.startswith(">") or stripped.startswith("[!NOTE]"):
+            if current_block_type not in {"blockquote", "note"} and current_block_lines:
+                blocks.append({
+                    "type": current_block_type or "paragraph",
+                    "lines": current_block_lines
+                })
+                current_block_lines = []
+            
+            if stripped.startswith("[!NOTE]"):
+                current_block_type = "note"
+                content = stripped[7:].strip()
+            elif stripped.startswith("> [!NOTE]"):
+                current_block_type = "note"
+                content = stripped[9:].strip()
+            else:
+                current_block_type = "blockquote"
+                content = stripped[1:].strip()
+            
+            current_block_lines.append(content)
+            i += 1
+            continue
+
+        if stripped.startswith("|"):
+            if current_block_type != "table" and current_block_lines:
+                blocks.append({
+                    "type": current_block_type or "paragraph",
+                    "lines": current_block_lines
+                })
+                current_block_lines = []
+            current_block_type = "table"
+            current_block_lines.append(stripped)
+            i += 1
+            continue
+
+        is_bullet = stripped.startswith("- ") or stripped.startswith("* ") or stripped.startswith("+ ")
+        is_numbered = re.match(r"^\d+\.\s+", stripped) is not None
+
+        if is_bullet or is_numbered:
+            if current_block_type != "list" and current_block_lines:
+                blocks.append({
+                    "type": current_block_type or "paragraph",
+                    "lines": current_block_lines
+                })
+                current_block_lines = []
+            current_block_type = "list"
+            current_block_lines.append(stripped)
+            i += 1
+            continue
+
+        if current_block_type in {"h1", "h2", "h3", "table", "list", "blockquote", "note"} and current_block_lines:
+            blocks.append({
+                "type": current_block_type,
+                "lines": current_block_lines
+            })
+            current_block_lines = []
+            current_block_type = "paragraph"
+
+        current_block_type = "paragraph"
+        current_block_lines.append(line)
+        i += 1
+
+    if current_block_lines:
+        blocks.append({
+            "type": current_block_type or "paragraph",
+            "lines": current_block_lines
+        })
+    elif in_code_block and code_content:
+        blocks.append({
+            "type": "code",
+            "content": "\n".join(code_content)
+        })
+
+    document = DocxDocument()
+    
+    # Configure document margins
+    for section in document.sections:
+        section.top_margin = Inches(1.0)
+        section.bottom_margin = Inches(1.0)
+        section.left_margin = Inches(1.0)
+        section.right_margin = Inches(1.0)
+        
+    # Configure default text styles
+    style_normal = document.styles['Normal']
+    font_normal = style_normal.font
+    font_normal.name = 'Times New Roman'
+    font_normal.size = Pt(12)
+    font_normal.color.rgb = RGBColor(0x00, 0x00, 0x00)
+    style_normal.paragraph_format.space_after = Pt(6)
+    style_normal.paragraph_format.line_spacing = 1.25
+
+    # Configure heading styles
+    for h_name, size, color in [
+        ('Heading 1', Pt(20), RGBColor(0x1e, 0x3a, 0x8a)),
+        ('Heading 2', Pt(16), RGBColor(0x0f, 0x76, 0x6e)),
+        ('Heading 3', Pt(13), RGBColor(0x1e, 0x29, 0x3b)),
+    ]:
+        if h_name in document.styles:
+            h_style = document.styles[h_name]
+            h_style.font.name = 'Times New Roman'
+            h_style.font.size = size
+            h_style.font.color.rgb = color
+            h_style.font.bold = True
+            h_style.paragraph_format.space_before = Pt(12)
+            h_style.paragraph_format.space_after = Pt(6)
+            h_style.paragraph_format.keep_with_next = True
+
+    # Configure list styles
+    for l_style_name in ['List Bullet', 'List Number']:
+        if l_style_name in document.styles:
+            l_style = document.styles[l_style_name]
+            l_style.font.name = 'Times New Roman'
+            l_style.font.size = Pt(12)
+            l_style.font.color.rgb = RGBColor(0x00, 0x00, 0x00)
+            l_style.paragraph_format.space_after = Pt(3)
+
+    if 'Title' in document.styles:
+        title_style = document.styles['Title']
+        title_style.font.name = 'Times New Roman'
+        title_style.font.size = Pt(26)
+        title_style.font.color.rgb = RGBColor(0x1e, 0x3a, 0x8a)
+        title_style.font.bold = True
+        title_style.paragraph_format.space_after = Pt(12)
+    
+    project_title = str(project.get("title") or "Bài giảng").strip() or "Bài giảng"
+    document.add_heading(project_title, level=0)
+    
+    project_description = str(project.get("description") or "").strip()
+    if project_description:
+        document.add_paragraph(project_description)
+    
+    for block in blocks:
+        b_type = block["type"]
+        if b_type.startswith("h") and b_type[1:].isdigit():
+            level = int(b_type[1:])
+            level = min(level, 3)
+            p = document.add_heading(level=level)
+            color = None
+            if level == 1:
+                color = RGBColor(0x1e, 0x3a, 0x8a)
+            elif level == 2:
+                color = RGBColor(0x0f, 0x76, 0x6e)
+            elif level == 3:
+                color = RGBColor(0x1e, 0x29, 0x3b)
+            add_formatted_text(p, block["content"], force_color=color)
+        
+        elif b_type == "paragraph":
+            text = " ".join([l.strip() for l in block["lines"]])
+            p = document.add_paragraph()
+            add_formatted_text(p, text)
+            
+        elif b_type == "list":
+            for line in block["lines"]:
+                line_stripped = line.strip()
+                if line_stripped.startswith("- ") or line_stripped.startswith("* ") or line_stripped.startswith("+ "):
+                    text = line_stripped[2:].strip()
+                    p = document.add_paragraph(style='List Bullet')
+                    p.paragraph_format.space_after = Pt(3)
+                    add_formatted_text(p, text)
+                else:
+                    match = re.match(r"^\d+\.\s+", line_stripped)
+                    if match:
+                        text = line_stripped[len(match.group()):].strip()
+                        p = document.add_paragraph(style='List Number')
+                        p.paragraph_format.space_after = Pt(3)
+                        add_formatted_text(p, text)
+                    else:
+                        p = document.add_paragraph()
+                        p.paragraph_format.space_after = Pt(3)
+                        add_formatted_text(p, line_stripped)
+                        
+        elif b_type in {"blockquote", "note"}:
+            is_note = b_type == "note"
+            bg_color = "EFF6FF" if is_note else "F8FAFC"
+            border_color = "2563EB" if is_note else "94A3B8"
+            text_color = RGBColor(0x1e, 0x3a, 0x8a) if is_note else RGBColor(0x33, 0x41, 0x55)
+            
+            table = document.add_table(rows=1, cols=1)
+            table.style = 'Table Grid'
+            cell = table.cell(0, 0)
+            
+            # Set background shading
+            shading_xml = f'<w:shd {nsdecls("w")} w:fill="{bg_color}"/>'
+            cell._tc.get_or_add_tcPr().append(parse_xml(shading_xml))
+            
+            # Set left border only
+            borders_xml = f'''
+            <w:tcBorders {nsdecls("w")}>
+                <w:top w:val="none"/>
+                <w:left w:val="single" w:sz="24" w:space="0" w:color="{border_color}"/>
+                <w:bottom w:val="none"/>
+                <w:right w:val="none"/>
+            </w:tcBorders>
+            '''
+            cell._tc.get_or_add_tcPr().append(parse_xml(borders_xml))
+            
+            # Set padding
+            margins_xml = f'''
+            <w:tcMar {nsdecls("w")}>
+                <w:top w:w="160" w:type="dxa"/>
+                <w:bottom w:w="160" w:type="dxa"/>
+                <w:left w:w="240" w:type="dxa"/>
+                <w:right w:w="240" w:type="dxa"/>
+            </w:tcMar>
+            '''
+            cell._tc.get_or_add_tcPr().append(parse_xml(margins_xml))
+            
+            p = cell.paragraphs[0]
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            
+            text = "\n".join(block["lines"])
+            add_formatted_text(p, text, force_italic=True, force_color=text_color)
+            document.add_paragraph()
+            
+        elif b_type == "code":
+            table = document.add_table(rows=1, cols=1)
+            table.style = 'Table Grid'
+            cell = table.cell(0, 0)
+            
+            shading_xml = f'<w:shd {nsdecls("w")} w:fill="F1F5F9"/>'
+            cell._tc.get_or_add_tcPr().append(parse_xml(shading_xml))
+            
+            borders_xml = f'''
+            <w:tcBorders {nsdecls("w")}>
+                <w:top w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>
+                <w:left w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>
+                <w:bottom w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>
+                <w:right w:val="single" w:sz="4" w:space="0" w:color="CBD5E1"/>
+            </w:tcBorders>
+            '''
+            cell._tc.get_or_add_tcPr().append(parse_xml(borders_xml))
+            
+            margins_xml = f'''
+            <w:tcMar {nsdecls("w")}>
+                <w:top w:w="160" w:type="dxa"/>
+                <w:bottom w:w="160" w:type="dxa"/>
+                <w:left w:w="160" w:type="dxa"/>
+                <w:right w:w="160" w:type="dxa"/>
+            </w:tcMar>
+            '''
+            cell._tc.get_or_add_tcPr().append(parse_xml(margins_xml))
+            
+            p = cell.paragraphs[0]
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            
+            content = block["content"].strip()
+            run = p.add_run(content)
+            run.font.name = 'Courier New'
+            run.font.size = Pt(8.5)
+            run.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+            document.add_paragraph()
+            
+        elif b_type == "mermaid_image":
+            try:
+                from PIL import Image as PILImage
+                img_data = BytesIO(block["content"])
+                pil_img = PILImage.open(img_data)
+                w, _ = pil_img.size
+                
+                # Scaled width in inches (max 6.0)
+                docx_width = Inches(min(6.0, w / 96.0))
+                
+                document.add_picture(img_data, width=docx_width)
+                document.add_paragraph()
+            except Exception:
+                pass
+            
+        elif b_type == "table":
+            raw_rows = []
+            for line in block["lines"]:
+                parts = [cell.strip() for cell in line.split("|")]
+                if len(parts) >= 2:
+                    cells = parts[1:-1]
+                    raw_rows.append(cells)
+            
+            if not raw_rows:
+                continue
+            
+            is_separator = False
+            if len(raw_rows) > 1:
+                second_row = raw_rows[1]
+                if all(re.match(r"^:?-+:?$", cell) for cell in second_row):
+                    is_separator = True
+            
+            cleaned_rows = []
+            for idx, r in enumerate(raw_rows):
+                if is_separator and idx == 1:
+                    continue
+                cleaned_rows.append(r)
+            
+            if not cleaned_rows:
+                continue
+                
+            num_cols = max(len(r) for r in cleaned_rows)
+            num_rows = len(cleaned_rows)
+            
+            table = document.add_table(rows=num_rows, cols=num_cols)
+            table.style = 'Table Grid'
+            
+            for r_idx, row_cells in enumerate(cleaned_rows):
+                row = table.rows[r_idx]
+                for c_idx, cell_value in enumerate(row_cells):
+                    if c_idx < len(row.cells):
+                        cell = row.cells[c_idx]
+                        
+                        borders_xml = f'''
+                        <w:tcBorders {nsdecls("w")}>
+                            <w:top w:val="single" w:sz="4" w:space="0" w:color="E2E8F0"/>
+                            <w:left w:val="single" w:sz="4" w:space="0" w:color="E2E8F0"/>
+                            <w:bottom w:val="single" w:sz="4" w:space="0" w:color="E2E8F0"/>
+                            <w:right w:val="single" w:sz="4" w:space="0" w:color="E2E8F0"/>
+                        </w:tcBorders>
+                        '''
+                        cell._tc.get_or_add_tcPr().append(parse_xml(borders_xml))
+                        
+                        p = cell.paragraphs[0]
+                        p.paragraph_format.space_before = Pt(2)
+                        p.paragraph_format.space_after = Pt(2)
+                        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                        
+                        if r_idx == 0:
+                            shading_xml = f'<w:shd {nsdecls("w")} w:fill="F8FAFC"/>'
+                            cell._tc.get_or_add_tcPr().append(parse_xml(shading_xml))
+                            add_formatted_text(p, cell_value, force_bold=True, force_color=RGBColor(0x1e, 0x29, 0x3b))
+                        else:
+                            add_formatted_text(p, cell_value, force_color=RGBColor(0x33, 0x41, 0x55))
+            document.add_paragraph()
 
     stream = BytesIO()
     document.save(stream)
@@ -887,7 +1852,7 @@ def _parse_section_json_response(raw: str) -> tuple[str, str]:
         pass
 
     # ── Try to extract a JSON object embedded in surrounding text ────────────
-    obj_match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    obj_match = re.search(r"\{[\s\S]*\}", cleaned)
     if obj_match:
         try:
             parsed = json.loads(obj_match.group())
@@ -898,6 +1863,38 @@ def _parse_section_json_response(raw: str) -> tuple[str, str]:
                 return content_raw.strip(), sentinel
         except (json.JSONDecodeError, ValueError):
             pass
+
+    # ── Try to extract content via Regex if JSON is malformed (e.g. missing commas) ──
+    content_match = re.search(r'"content"\s*:\s*"((?:[^"\\]|\\.)*)"', cleaned, re.DOTALL)
+    if content_match:
+        try:
+            content_val = json.loads(f'"{content_match.group(1)}"')
+            sentinel = ""
+            sentinel_match = re.search(r'"sentinel"\s*:\s*"([^"]*)"', cleaned)
+            if sentinel_match:
+                sentinel_raw = sentinel_match.group(1).strip().upper()
+                if sentinel_raw in {"NOT_ENOUGH_CONTEXT", "FAIL_COVERAGE"}:
+                    sentinel = sentinel_raw
+            return content_val.strip(), sentinel
+        except Exception:
+            pass
+
+    # If the text itself looks like a raw JSON object string representation but failed parsing,
+    # let's try to unescape it or clean up quotes.
+    if text.startswith("{") and text.endswith("}"):
+        # Check if it contains escaped quotes like \"content\"
+        if '\\"' in text:
+            try:
+                # Replace escaped quotes and attempt parse
+                unescaped = text.replace('\\"', '"')
+                parsed = json.loads(unescaped)
+                if isinstance(parsed, dict):
+                    content_raw = str(parsed.get("content") or "")
+                    sentinel_raw = str(parsed.get("sentinel") or "").strip().upper()
+                    sentinel = sentinel_raw if sentinel_raw in {"NOT_ENOUGH_CONTEXT", "FAIL_COVERAGE"} else ""
+                    return content_raw.strip(), sentinel
+            except Exception:
+                pass
 
     # ── Legacy fallback: LLM returned raw Markdown (pre-JSON contract) ───────
     logger.warning("_parse_section_json_response: LLM returned non-JSON; using raw Markdown fallback")
@@ -1585,6 +2582,7 @@ def _fallback_section_evaluation(section_name: str, generated_content: str) -> d
     sentinel = _extract_control_sentinel(generated_content)
     if sentinel == "NOT_ENOUGH_CONTEXT":
         return {
+            "is_fallback": True,
             "scores": {
                 "accuracy": 0.0,
                 "coverage": 0.0,
@@ -1601,6 +2599,7 @@ def _fallback_section_evaluation(section_name: str, generated_content: str) -> d
 
     if sentinel == "FAIL_COVERAGE":
         return {
+            "is_fallback": True,
             "scores": {
                 "accuracy": 7.0,
                 "coverage": 3.0,
@@ -1616,6 +2615,7 @@ def _fallback_section_evaluation(section_name: str, generated_content: str) -> d
         }
 
     return {
+        "is_fallback": True,
         "scores": {
             "accuracy": 7.0,
             "coverage": 7.0,
@@ -1706,6 +2706,7 @@ def _evaluate_section_quality(section_name: str, context_text: str, generated_co
     fallback_scores = fallback.get("scores", {}) if isinstance(fallback.get("scores"), dict) else {}
 
     normalized = {
+        "is_fallback": False,
         "scores": {
             "accuracy": _clamp_ten_score(score_data.get("accuracy"), float(fallback_scores.get("accuracy", 0.0))),
             "coverage": _clamp_ten_score(score_data.get("coverage"), float(fallback_scores.get("coverage", 0.0))),
@@ -2163,14 +3164,8 @@ def _enforce_hard_section_format(
 def _parse_outline_to_sections(outline_markdown: str) -> list[dict[str, Any]]:
     def _clean_outline_title(text: str) -> str:
         cleaned = (text or "").strip()
-        # Remove document-style prefixes such as "1.", "1.2.3", "Chapter 2", "Phần 1".
-        cleaned = re.sub(r"^\s*\d+(?:\.\d+)*(?:[\.)-])?\s+", "", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(
-            r"^\s*(?:chapter|chuong|chương|part|phan|phần|section|muc|mục)\s*[:\-]?\s*\d+(?:\.\d+)*\s*[:\-]?\s*",
-            "",
-            cleaned,
-            flags=re.IGNORECASE,
-        )
+        # Only strip leading markdown list markers like -, *, +, but keep numbers and "Chương/Mục" prefixes
+        cleaned = re.sub(r"^[-*+•\s]+", "", cleaned)
         return cleaned.strip()
 
     sections: list[dict[str, Any]] = []
@@ -2184,7 +3179,7 @@ def _parse_outline_to_sections(outline_markdown: str) -> list[dict[str, Any]]:
 
         heading = re.match(r"^(#{1,6})\s+(.+)$", stripped)
         if heading:
-            level = max(1, len(heading.group(1)) - 1)
+            level = max(1, len(heading.group(1))) # keep absolute heading levels: # is level 1, ## is level 2, ### is level 3
             title = _clean_outline_title(heading.group(2))
             if title:
                 sections.append({"title": title, "level": level})
@@ -2194,17 +3189,29 @@ def _parse_outline_to_sections(outline_markdown: str) -> list[dict[str, Any]]:
         if numbered:
             order_token = numbered.group(1)
             level = max(1, order_token.count(".") + 1)
-            title = _clean_outline_title(numbered.group(2))
+            title = _clean_outline_title(stripped) # Keep the full numbered prefix line
             sections.append({"title": title, "level": level})
             continue
 
-        bullet = re.match(r"^[-*+]\s+(.+)$", stripped)
+        bullet = re.match(r"^[-*+•]\s+(.+)$", stripped)
         if bullet:
             indent_spaces = len(line) - len(line.lstrip(" "))
-            level = max(1, (indent_spaces // 2) + 1)
+            level = max(2, (indent_spaces // 2) + 2) # Indented bullets are sub-sections
             title = _clean_outline_title(bullet.group(1))
             if title:
+                # If bullet starts with a hierarchy number, infer level from it
+                sub_num = re.match(r"^(\d+(?:\.\d+)*)", title)
+                if sub_num:
+                    level = max(1, sub_num.group(1).count(".") + 1)
                 sections.append({"title": title, "level": level})
+            continue
+
+        # Fallback for plain lines
+        level = 1
+        sub_num = re.match(r"^(\d+(?:\.\d+)*)", stripped)
+        if sub_num:
+            level = max(1, sub_num.group(1).count(".") + 1)
+        sections.append({"title": stripped, "level": level})
 
     normalized: list[dict[str, Any]] = []
     for idx, item in enumerate(sections):
@@ -2217,23 +3224,14 @@ def _parse_outline_to_sections(outline_markdown: str) -> list[dict[str, Any]]:
 
 
 def _normalize_teaching_outline_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    canonical_order = [
-        "Tiêu đề bài học",
-        "Mục tiêu học tập",
-        "Giới thiệu",
-        "Nội dung chính",
-        "Ví dụ minh họa",
-        "Tóm tắt",
-        "Câu hỏi ôn tập",
-    ]
-
+    import uuid
     normalized: list[dict[str, Any]] = []
-    for order_idx, title in enumerate(canonical_order):
+    for order_idx, s in enumerate(sections):
         normalized.append(
             {
                 "section_id": str(uuid.uuid4()),
-                "title": title,
-                "level": 1,
+                "title": str(s.get("title", "")).strip(),
+                "level": int(s.get("level", 1)),
                 "order_index": order_idx,
             }
         )

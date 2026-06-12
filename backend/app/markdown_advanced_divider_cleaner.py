@@ -250,6 +250,29 @@ class AdvancedMarkdownCleaner:
         import logging
         logger = logging.getLogger(__name__)
         
+        # Count the number of dividers in the text
+        divider_lines = [ln for ln in text.split('\n') if self.divider_pattern.match(ln)]
+        
+        # Estimate number of pages if not provided
+        page_markers = re.findall(
+            r'^#+\s*(?:page|trang|pg\s*#?|p\.)\s*\d+',
+            text,
+            re.IGNORECASE | re.MULTILINE
+        )
+        estimated_pages = max(1, len(page_markers))
+        
+        # If we have very few dividers compared to estimated pages, it's not a divider-based doc.
+        # Fallback immediately to clean_markdown_advanced.
+        if len(divider_lines) < estimated_pages * 0.5:
+            logger.warning(
+                f"Document has low divider density ({len(divider_lines)} dividers for {estimated_pages} estimated pages). "
+                f"Falling back to clean_markdown_advanced."
+            )
+            cleaned_text, _ = clean_markdown_advanced(text, debug=False)
+            cleaned_text = re.sub(r'\n\n+', '\n\n', cleaned_text.strip())
+            cleaned_text = self._remove_repeated_boilerplate(cleaned_text)
+            return cleaned_text, []
+
         # Extract page structure
         pages = self.extract_page_content(text)
         
@@ -315,12 +338,18 @@ class AdvancedMarkdownCleaner:
                 output_lines.append(original)
                 continue
 
+            # Preserve table rows (starting with '|') to keep table structure intact
+            if original.strip().startswith('|'):
+                output_lines.append(original)
+                continue
+
             is_short = len(norm) <= 120
             repeated = freq.get(norm, 0) >= 2
             has_marker = bool(marker_pattern.search(norm))
 
             if is_short and (repeated or has_marker):
                 continue
+
 
             output_lines.append(original)
 

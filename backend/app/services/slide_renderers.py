@@ -38,11 +38,44 @@ except Exception as _e:
 
 PDF_OK = False
 PDF_ERROR: str = ""
+pdf_font_name: str = "Helvetica"
+pdf_font_bold_name: str = "Helvetica-Bold"
 
 try:
     from reportlab.lib.pagesizes import landscape, A4  # type: ignore
     from reportlab.lib.colors import HexColor           # type: ignore
     from reportlab.pdfgen.canvas import Canvas as _Canvas  # type: ignore
+    from reportlab.pdfbase import pdfmetrics as _pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont as _TTFont
+    from reportlab.platypus import Paragraph as _Paragraph
+    from reportlab.lib.styles import ParagraphStyle as _ParagraphStyle
+    from pathlib import Path
+    
+    font_candidates = [
+        ("RAGArial", "C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/arialbd.ttf"),
+        ("RAGDejaVu", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+        ("RAGNoto", "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf", "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf"),
+        ("RAGLiberation", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+    ]
+    
+    registered = False
+    for name, reg, bold in font_candidates:
+        if Path(reg).exists():
+            try:
+                _pdfmetrics.registerFont(_TTFont(name, reg))
+                bold_name = f"{name}-Bold"
+                if Path(bold).exists():
+                    _pdfmetrics.registerFont(_TTFont(bold_name, bold))
+                else:
+                    bold_name = name
+                _pdfmetrics.registerFontFamily(name, normal=name, bold=bold_name)
+                pdf_font_name = name
+                pdf_font_bold_name = bold_name
+                registered = True
+                break
+            except Exception:
+                continue
+                
     PDF_OK = True
 except Exception as _pe:
     PDF_ERROR = str(_pe)
@@ -447,37 +480,68 @@ class PdfRenderer:
                 c.rect(0, 0, 10, H, fill=1, stroke=0)
 
                 c.setFillColor(self._type_color(idx, total))
-                c.setFont("Helvetica-Bold", 8)
+                c.setFont(pdf_font_bold_name, 8)
                 c.drawRightString(W - 16, H - 20, f"{self._type_label(idx, total)}  {idx+1}/{total}")
 
-                c.setFillColor(self.WHITE)
-                c.setFont("Helvetica-Bold", 32)
-                c.drawString(26, H - 68, str(item.title or "")[:100])
+                # Define styles dynamically to support registered fonts
+                title_style = _ParagraphStyle(
+                    "SlideTitle",
+                    fontName=pdf_font_bold_name,
+                    fontSize=26,
+                    leading=30,
+                    textColor=self.WHITE,
+                )
+                bullet_style = _ParagraphStyle(
+                    "SlideBullet",
+                    fontName=pdf_font_name,
+                    fontSize=16,
+                    leading=20,
+                    textColor=self.BULLET,
+                )
 
+                # Title paragraph wrapping
+                p_title = _Paragraph(str(item.title or ""), title_style)
+                w_title, h_title = p_title.wrap(W - 52, 120)
+                
+                # Draw title (positioned top-aligned at H - 26)
+                title_y = H - 26 - h_title
+                p_title.drawOn(c, 26, title_y)
+
+                # Draw accent line below title
+                line_y = title_y - 12
                 c.setStrokeColor(self.ACCENT)
                 c.setLineWidth(2.5)
-                c.line(26, H - 82, W - 26, H - 82)
+                c.line(26, line_y, W - 26, line_y)
+
+                # Content area starts below the line
+                content_top_y = line_y - 24
 
                 if item.diagram and item.diagram.nodes:
                     # Render two columns: left for bullets (first half), right for diagram
                     half = (len(item.bullet_points) + 1) // 2
                     left_bullets = item.bullet_points[:half]
                     
-                    c.setFont("Helvetica", 18)
-                    y = H - 106
+                    y = content_top_y
                     for bullet in left_bullets[:6]:
-                        if y < 60:
+                        p = _Paragraph(str(bullet or ""), bullet_style)
+                        w_b, h_b = p.wrap(379, 200) # Left column width: 421 - 42 = 379
+                        
+                        y_bottom = y - h_b
+                        if y_bottom < 60:
                             break
+                            
+                        p.drawOn(c, 42, y_bottom)
+                        
                         c.setFillColor(self.ACCENT)
-                        c.drawString(26, y, "▸")
-                        c.setFillColor(self.BULLET)
-                        c.drawString(42, y, str(bullet or "")[:120])
-                        y -= 34
+                        c.setFont(pdf_font_name, 16)
+                        c.drawString(26, y_bottom + h_b - 16, "▸")
+                        
+                        y = y_bottom - 14
                         
                     # Divider in the middle
                     c.setStrokeColor(self.DIM)
                     c.setLineWidth(1.0)
-                    c.line(421, H - 82, 421, 60)
+                    c.line(421, line_y, 421, 60)
                     
                     # Right column diagram area: width=360, height=240, left=446, top=135 in PDF
                     # scale = 1.0 (1-to-1 pixels)
@@ -637,7 +701,7 @@ class PdfRenderer:
 
                             # Label text
                             c.setFillColor(HexColor("#4f46e5"))
-                            c.setFont("Helvetica-Bold", 7)
+                            c.setFont(pdf_font_bold_name, 7)
                             c.drawCentredString(mx_pdf, my_pdf - 2, label_text)
 
                     # Render nodes on top
@@ -653,24 +717,30 @@ class PdfRenderer:
 
                         # Draw node label
                         c.setFillColor(HexColor("#1e293b"))
-                        c.setFont("Helvetica-Bold", 8)
+                        c.setFont(pdf_font_bold_name, 8)
                         c.drawCentredString(nx_pdf, ny_pdf - 3, str(pos["label"]))
 
                 else:
                     # Standard full-width layout
-                    c.setFont("Helvetica", 18)
-                    y = H - 106
+                    y = content_top_y
                     for bullet in item.bullet_points[:6]:
-                        if y < 60:
+                        p = _Paragraph(str(bullet or ""), bullet_style)
+                        w_b, h_b = p.wrap(W - 68, 200) # Full width: W - 26 - 42 = W - 68
+                        
+                        y_bottom = y - h_b
+                        if y_bottom < 60:
                             break
+                            
+                        p.drawOn(c, 42, y_bottom)
+                        
                         c.setFillColor(self.ACCENT)
-                        c.drawString(26, y, "▸")
-                        c.setFillColor(self.BULLET)
-                        c.drawString(42, y, str(bullet or "")[:120])
-                        y -= 34
+                        c.setFont(pdf_font_name, 16)
+                        c.drawString(26, y_bottom + h_b - 16, "▸")
+                        
+                        y = y_bottom - 14
 
                 c.setFillColor(self.DIM)
-                c.setFont("Helvetica", 9)
+                c.setFont(pdf_font_name, 9)
                 c.drawCentredString(W / 2, 16, deck_title[:60])
 
             except Exception as ex:

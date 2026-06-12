@@ -21,28 +21,15 @@ from .project_rag_system_prompts import resolve_section_scope
 OUTLINE_USER_PROMPT_TEMPLATE = """\
 You are an expert educator.
 
-Generate a LESSON OUTLINE (not a document table of contents).
-
-DISTINCTION:
-- This is a TEACHING OUTLINE, not a book outline.
-- SECTION TITLES: Must be descriptive and specific (e.g., instead of "Syntax", use "Syntax of SQL SELECT statement").
-- FLOW: Ensure a logical progression from basics to complex applications.
+Generate a teaching outline for the lesson based on the Topic title and the Teacher requirement.
 
 Topic title: {document_title}
 Teacher requirement: {user_prompt}
 
-MANDATORY STRUCTURE (do NOT rename, remove, or reorder):
-    1) Tiêu đề bài học
-    2) Mục tiêu học tập
-    3) Giới thiệu
-    4) Nội dung chính
-    5) Ví dụ minh họa
-    6) Tóm tắt
-    7) Câu hỏi ôn tập
-
 REQUIREMENTS:
-- Return only 7 headings in Markdown (#, ##, ###). No paragraphs.
-- No chapter/part labels (e.g. no "Phần 1", "Chương 2").
+- Organize the outline using Markdown headings (# for main chapters/topics, ## for sections, ### for subsections).
+- The outline should contain only headings. No paragraphs or introduction text.
+- Ensure the outline has a logical learning progression.
 - Vietnamese with proper diacritics.
 - Use ONLY the provided context.
 """
@@ -265,6 +252,13 @@ def build_section_user_prompt(
 ) -> str:
     section_key = normalize_section_profile_key(section_title)
     format_rules = get_section_format_rules(section_title)
+    if user_prompt.strip():
+        override_instruction = (
+            "⚠️ OVERRIDE RULE (CRITICAL):\n"
+            "- The USER INSTRUCTION takes absolute precedence over the format rules below.\n"
+            "- If the USER INSTRUCTION conflicts with any of the rules below, you MUST follow the USER INSTRUCTION.\n\n"
+        )
+        format_rules = override_instruction + format_rules
     section_scope = resolve_section_scope(section_title)
     level_guidance = _build_level_guidance(learner_level)
 
@@ -390,6 +384,13 @@ def build_project_rag_batch_user_prompt(
     guidance_blocks = []
     for s in sections:
         format_rules = get_section_format_rules(s["title"])
+        if user_prompt.strip():
+            override_instruction = (
+                "⚠️ OVERRIDE RULE (CRITICAL):\n"
+                "- The USER INSTRUCTION takes absolute precedence over the format rules below.\n"
+                "- If the USER INSTRUCTION conflicts with any of the rules below, you MUST follow the USER INSTRUCTION.\n\n"
+            )
+            format_rules = override_instruction + format_rules
         block = (
             f"=== RULES FOR: {s['title']} (ID: {s['id']}) ===\n"
             f"{format_rules}\n"

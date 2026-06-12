@@ -8,8 +8,8 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-import chromadb
-from chromadb.api.models.Collection import Collection
+import qdrant_client
+from qdrant_client.http import models
 
 from .rag_flows.answer_generation import answer_with_gemini as flow_answer_with_gemini
 from .rag_flows.answer_generation import answer_with_gemini_stream as flow_answer_with_gemini_stream
@@ -103,9 +103,21 @@ class RAGPipeline:
         self.cohere_api_key = os.getenv("COHERE_API_KEY", "")
         self.cohere_rerank_model = os.getenv("COHERE_RERANK_MODEL", "rerank-v3.5")
 
-        chroma_dir = os.getenv("CHROMA_PERSIST_DIR", str(Path(__file__).resolve().parent.parent / "chroma_db"))
-        self.chroma_client = chromadb.PersistentClient(path=chroma_dir)
-        self.default_collection_name = os.getenv("CHROMA_COLLECTION", "rag_markdown_chunks")
+        qdrant_url = os.getenv("QDRANT_URL", "").strip()
+        qdrant_dir = os.getenv("QDRANT_PERSIST_DIR", str(Path(__file__).resolve().parent.parent / "qdrant_db"))
+        self.default_collection_name = os.getenv("QDRANT_COLLECTION", "rag_markdown_chunks_qdrant")
+
+        if qdrant_url:
+            try:
+                self.qdrant_client = qdrant_client.QdrantClient(url=qdrant_url, timeout=3.0)
+                self.qdrant_client.get_collections()
+                logger.info("Connected to Qdrant server at %s", qdrant_url)
+            except Exception as e:
+                logger.warning("Failed to connect to Qdrant server at %s: %s. Falling back to local embedded Qdrant Client.", qdrant_url, e)
+                self.qdrant_client = qdrant_client.QdrantClient(path=qdrant_dir)
+        else:
+            logger.info("Initializing local embedded Qdrant Client at %s", qdrant_dir)
+            self.qdrant_client = qdrant_client.QdrantClient(path=qdrant_dir)
 
         if self.gemini_api_key:
             self.gemini_llm_model = self._resolve_initial_llm_model()
@@ -199,11 +211,11 @@ class RAGPipeline:
 
         # Main content needs larger output budget to avoid truncated sentences.
         if "SYSTEM MODE: SECTION_MAIN_CONTENT." in normalized_prompt:
-            return 2000
+            return 4000
 
         # Learning objectives often get cut off; give extra room for complete sentences.
         if "SYSTEM MODE: SECTION_LEARNING_OBJECTIVES." in normalized_prompt:
-            return 420
+            return 600
 
         return None
 
@@ -212,20 +224,35 @@ class RAGPipeline:
         prompt: str,
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
+        response_mime_type: Optional[str] = None,
     ) -> Tuple[str, bool]:
         return task_generate_content_with_failover(
             self,
             prompt,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
+            response_mime_type=response_mime_type,
         )
 
     def check_model_health(self) -> Dict[str, object]:
         return task_check_model_health(self)
 
-    def _collection(self, collection_name: Optional[str] = None) -> Collection:
+    def _collection(self, collection_name: Optional[str] = None, dims: int = 3072) -> str:
         name = collection_name or self.default_collection_name
-        return self.chroma_client.get_or_create_collection(name=name)
+        try:
+            self.qdrant_client.get_collection(collection_name=name)
+        except Exception:
+            try:
+                self.qdrant_client.create_collection(
+                    collection_name=name,
+                    vectors_config=models.VectorParams(
+                        size=dims,
+                        distance=models.Distance.COSINE
+                    )
+                )
+            except Exception as e:
+                logger.debug("Failed to create collection %s: %s", name, e)
+        return name
 
     def _embed_document(self, text: str) -> List[float]:
         return task_embed_document(self, text)

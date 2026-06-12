@@ -371,12 +371,27 @@ def _normalize_math_formulas(text: str) -> str:
     if not text:
         return ""
 
-    repaired = _repair_math_symbol_glyphs(text)
+    # Shield URLs to prevent them from being corrupted by math/fraction regexes
+    url_pattern = re.compile(r'\bhttps?://\S+|\bwww\.\S+|\b[A-Za-z0-9.-]+\.[A-Za-z]{2,6}/\S+')
+    urls = []
+    def url_shield(match):
+        urls.append(match.group(0))
+        return f"__URL_PLACEHOLDER_{len(urls)-1}__"
+
+    shielded_text = url_pattern.sub(url_shield, text)
+
+    repaired = _repair_math_symbol_glyphs(shielded_text)
     repaired = _normalize_set_builder_notation(repaired)
 
     lines = repaired.splitlines()
     normalized_lines = [_normalize_math_line(line) for line in lines]
-    return "\n".join(normalized_lines)
+    normalized_text = "\n".join(normalized_lines)
+
+    # Restore URLs
+    for idx, url in enumerate(urls):
+        normalized_text = normalized_text.replace(f"__URL_PLACEHOLDER_{idx}__", url)
+
+    return normalized_text
 
 
 def _count_private_use_chars(text: str) -> int:
@@ -496,6 +511,22 @@ def _replace_math_ocr_patterns(segment: str) -> str:
 
         # Avoid converting date-like numeric tokens (e.g., 12/2024).
         if num.isdigit() and den.isdigit() and (len(num) > 2 or len(den) > 2):
+            return match.group(0)
+
+        # Avoid converting text slashes (e.g., Git/GitHub, yes/no, input/output, TCP/IP, x-axis/y-axis)
+        def is_math_expr(expr: str) -> bool:
+            words = re.findall(r"[A-Za-z]+", expr)
+            math_words = {
+                "dx", "dy", "dt", "dz", "dr", "df", "dg", "dp", "dq", "ds", "dtheta", "du", "dv", "dw",
+                "sin", "cos", "tan", "cot", "sec", "csc", "log", "ln", "exp", "lim", "max", "min",
+                "pi", "theta", "phi", "psi", "omega", "alpha", "beta", "gamma", "delta", "lambda", "sigma", "sqrt"
+            }
+            for w in words:
+                if len(w) > 1 and w.lower() not in math_words:
+                    return False
+            return True
+
+        if not is_math_expr(num) or not is_math_expr(den):
             return match.group(0)
 
         return f"\\frac{{{num}}}{{{den}}}"
@@ -1002,94 +1033,113 @@ def _extract_from_pdf_with_meta(
                 current_page_native_chars = 0
                 current_page_private_use_chars = 0
 
-                # First: Extract tables and keep normalized row signatures for de-duplication.
-                # Use tolerant settings for better handling of complex/merged tables
                 custom_table_settings = {
                     "vertical_strategy": "lines",
                     "horizontal_strategy": "lines",
                     "intersection_tolerance": 15,
                     "join_tolerance": 15
                 }
-                tables = page.extract_tables(table_settings=custom_table_settings) or []
-                if not tables:
-                    tables = page.extract_tables() or []
+                
+                # Find tables with coordinates and sort them vertically (top-to-bottom)
+                tables_found = page.find_tables(table_settings=custom_table_settings)
+                if not tables_found:
+                    tables_found = page.find_tables()
+                
+                tables_found = sorted(tables_found, key=lambda t: t.bbox[1]) if tables_found else []
+                
+                y_current = 0
+                width = page.width
+                height = page.height
+                
+                # We collect segments as (type, content) tuples
+                segments = []
+                
+                for table_obj in tables_found:
+                    x0, y0, x1, y1 = table_obj.bbox
+                    
+                    # Extract text before this table
+                    if y0 > y_current:
+                        text_area = page.crop((0, y_current, width, y0))
+                        txt = text_area.extract_text() or ""
+                        if txt.strip():
+                            segments.append(("text", txt.strip()))
+                    
+                    # Extract table data
+                    table_data = table_obj.extract()
+                    if table_data:
+                        segments.append(("table", table_data))
+                        
+                    y_current = y1
+                
+                # Extract remaining text after the last table
+                if y_current < height:
+                    text_area = page.crop((0, y_current, width, height))
+                    txt = text_area.extract_text() or ""
+                    if txt.strip():
+                        segments.append(("text", txt.strip()))
+                
                 table_row_signatures: set[str] = set()
                 
-                # Convert tables to markdown format
-                table_added = False
-                for table in tables:
-                    if not table:
-                        continue
-
-                    rows = [[(cell or "").strip().replace("\n", " ") for cell in row] for row in table if row]
-                    if not rows:
-                        continue
-
-                    header = rows[0]
-                    body = rows[1:] if len(rows) > 1 else []
-                    col_count = max(1, len(header))
-
-                    header_signature = _normalize_line_for_compare(" ".join(cell for cell in header if cell))
-                    if header_signature:
-                        table_row_signatures.add(header_signature)
-
-                    header_line = "| " + " | ".join(header) + " |"
-                    divider_line = "|" + "|".join(["---"] * col_count) + "|"
-                    current_block.append(header_line)
-                    current_block.append(divider_line)
-                    native_text_chars += len(header_line) + len(divider_line)
-                    current_page_native_chars += len(header_line) + len(divider_line)
-                    current_page_private_use_chars += _count_private_use_chars(header_line)
-                    current_page_private_use_chars += _count_private_use_chars(divider_line)
-
-                    for row in body:
-                        if len(row) < col_count:
-                            row = row + [""] * (col_count - len(row))
-                        current_row = row[:col_count]
-                        row_signature = _normalize_line_for_compare(" ".join(cell for cell in current_row if cell))
-                        if row_signature:
-                            table_row_signatures.add(row_signature)
-                        row_line = "| " + " | ".join(current_row) + " |"
-                        current_block.append(row_line)
-                        native_text_chars += len(row_line)
-                        current_page_native_chars += len(row_line)
-                        current_page_private_use_chars += _count_private_use_chars(row_line)
-                    
-                    table_added = True
-
-                # Second: Extract text, filtering out table-like rows to avoid duplication
-                text = (page.extract_text() or "").strip()
-                if text:
-                    # Remove lines that are part of extracted tables (pipe-delimited format)
-                    # This prevents double-output: once as raw text, once as markdown table
-                    text_lines = text.split('\n')
-                    filtered_lines = []
-                    for line in text_lines:
-                        stripped = line.strip()
-                        # Skip lines that look like table rows (contain multiple pipes)
-                        # Count pipes - if 3+ pipes, likely a table row
-                        if stripped.count('|') >= 2:
-                            logger.debug(f"  Skip table row from text: {stripped[:60]}")
+                # Pass 1: Build signatures of all table rows to filter text duplicates
+                for seg_type, content in segments:
+                    if seg_type == "table":
+                        for row in content:
+                            if row:
+                                row_clean = [(cell or "").strip().replace("\n", " ") for cell in row]
+                                row_signature = _normalize_line_for_compare(" ".join(cell for cell in row_clean if cell))
+                                if row_signature:
+                                    table_row_signatures.add(row_signature)
+                
+                # Pass 2: Process segments in order and append to current_block
+                for seg_type, content in segments:
+                    if seg_type == "table":
+                        rows = [[(cell or "").strip().replace("\n", " ") for cell in row] for row in content if row]
+                        if not rows:
                             continue
-
-                        # Skip plain-text table duplicates like:
-                        # "STT Ho va ten Cong viec" / "1 Nguyen ... Frontend"
-                        normalized_line = _normalize_line_for_compare(stripped)
-                        if normalized_line and normalized_line in table_row_signatures:
-                            logger.debug(f"  Skip plain table duplicate: {stripped[:60]}")
-                            continue
-
-                        filtered_lines.append(line)
-                    
-                    filtered_text = '\n'.join(filtered_lines).strip()
-                    if filtered_text:
-                        # Add blank line after table before text content
-                        if table_added:
-                            current_block.append("")
-                        current_block.append(filtered_text)
-                        native_text_chars += len(filtered_text)
-                        current_page_native_chars += len(filtered_text)
-                        current_page_private_use_chars += _count_private_use_chars(filtered_text)
+                        header = rows[0]
+                        body = rows[1:] if len(rows) > 1 else []
+                        col_count = max(1, len(header))
+                        
+                        header_line = "| " + " | ".join(header) + " |"
+                        divider_line = "|" + "|".join(["---"] * col_count) + "|"
+                        current_block.append(header_line)
+                        current_block.append(divider_line)
+                        
+                        native_text_chars += len(header_line) + len(divider_line)
+                        current_page_native_chars += len(header_line) + len(divider_line)
+                        current_page_private_use_chars += _count_private_use_chars(header_line)
+                        current_page_private_use_chars += _count_private_use_chars(divider_line)
+                        
+                        for row in body:
+                            if len(row) < col_count:
+                                row = row + [""] * (col_count - len(row))
+                            current_row = row[:col_count]
+                            row_line = "| " + " | ".join(current_row) + " |"
+                            current_block.append(row_line)
+                            native_text_chars += len(row_line)
+                            current_page_native_chars += len(row_line)
+                            current_page_private_use_chars += _count_private_use_chars(row_line)
+                    else:
+                        # Process text segment
+                        text_lines = content.split('\n')
+                        filtered_lines = []
+                        for line in text_lines:
+                            stripped = line.strip()
+                            if stripped.count('|') >= 2:
+                                continue
+                            normalized_line = _normalize_line_for_compare(stripped)
+                            if normalized_line and normalized_line in table_row_signatures:
+                                continue
+                            filtered_lines.append(line)
+                            
+                        filtered_text = '\n'.join(filtered_lines).strip()
+                        if filtered_text:
+                            if len(current_block) > 1 and current_block[-1] != "":
+                                current_block.append("")
+                            current_block.append(filtered_text)
+                            native_text_chars += len(filtered_text)
+                            current_page_native_chars += len(filtered_text)
+                            current_page_private_use_chars += _count_private_use_chars(filtered_text)
 
                 page_blocks.append(current_block)
                 page_native_chars.append(current_page_native_chars)
@@ -1212,23 +1262,32 @@ def _extract_text_from_pdf_ocr(
         cache_hits = 0
         cache_misses = 0
 
-        # Helper for parallel processing
-        def _process_page(page_index: int) -> tuple[int, str, Literal["good", "medium", "bad"], bool]:
-            if target_set and page_index not in target_set:
-                return page_index, "", "good", False
+        # Process pages sequentially to guarantee thread-safety for pdfium and PaddleOCR,
+        # and to prevent OOM/memory spikes from concurrent page rendering.
+        results_map = {}
+        for i in range(len(pdf_doc)):
+            if target_set and i not in target_set:
+                results_map[i] = ("", "good", False)
+                continue
 
             cached = _load_cached_ocr_page(
                 file_fingerprint=file_fingerprint,
-                page_index=page_index,
+                page_index=i,
             )
             if cached is not None:
-                return page_index, cached.get("text", ""), cached.get("quality", "good"), bool(cached.get("ocr_used", True))
+                results_map[i] = (
+                    cached.get("text", ""),
+                    cached.get("quality", "good"),
+                    bool(cached.get("ocr_used", True))
+                )
+                cache_hits += 1
+                continue
 
+            cache_misses += 1
             try:
-                # Need to open page in each thread for pdfium
-                thread_page = pdf_doc[page_index]
+                page = pdf_doc[i]
                 # Scale 3.0 is a good balance between speed and quality
-                bitmap = thread_page.render(scale=3.0)
+                bitmap = page.render(scale=3.0)
                 image = bitmap.to_pil()
                 normalized, quality, ocr_used = _extract_page_ocr_best(image)
                 if quality == "bad":
@@ -1236,26 +1295,15 @@ def _extract_text_from_pdf_ocr(
                 
                 _save_cached_ocr_page(
                     file_fingerprint=file_fingerprint,
-                    page_index=page_index,
+                    page_index=i,
                     text=normalized,
                     quality=quality,
                     ocr_used=ocr_used,
                 )
-                return page_index, normalized, quality, ocr_used
+                results_map[i] = (normalized, quality, ocr_used)
             except Exception as page_err:
-                logger.debug("OCR failed for page %s: %s", page_index + 1, page_err)
-                return page_index, "", "bad", False
-
-        # Use ThreadPoolExecutor for parallel page processing. 
-        # OCR is CPU bound but much of the time is spent in PIL/pdfium rendering which releases GIL or uses C-libs.
-        # We limit max_workers to avoid memory spikes with large bitmaps.
-        max_workers = min(4, os.cpu_count() or 1)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_page = {executor.submit(_process_page, i): i for i in range(len(pdf_doc))}
-            results_map = {}
-            for future in concurrent.futures.as_completed(future_to_page):
-                idx, text, qual, used = future.result()
-                results_map[idx] = (text, qual, used)
+                logger.warning("OCR failed for page %s: %s", i + 1, page_err)
+                results_map[i] = ("", "bad", False)
 
         ocr_results = []
         page_qualities = []
@@ -1264,13 +1312,6 @@ def _extract_text_from_pdf_ocr(
             ocr_results.append(text)
             page_qualities.append(qual)
             any_ocr_used = any_ocr_used or used
-            
-            # Count cache hits/misses post-parallel
-            is_target = target_set and i in target_set or not target_set
-            if is_target:
-                cached = _load_cached_ocr_page(file_fingerprint, i)
-                if cached: cache_hits += 1
-                else: cache_misses += 1
 
         if cache_hits > 0:
             logger.info("OCR cache hit: %s pages (miss=%s)", cache_hits, cache_misses)

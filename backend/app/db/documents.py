@@ -300,3 +300,22 @@ def update_project_section(
         ).fetchone()
         conn.commit()
     return dict(updated) if updated else None
+
+
+def update_document_progress(
+    document_id: str,
+    progress: int,
+    status: str = "processing",
+    error: str | None = None,
+) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """
+            UPDATE documents
+            SET processing_progress = %s, status = %s, processing_error = %s, updated_at = %s
+            WHERE id = %s
+            """,
+            (int(progress), status, error, _utc_now(), document_id),
+        )
+        conn.commit()
+

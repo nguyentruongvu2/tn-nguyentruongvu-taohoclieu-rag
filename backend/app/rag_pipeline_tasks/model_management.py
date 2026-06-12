@@ -134,12 +134,12 @@ def runtime_model_order(pipeline: "RAGPipeline") -> List[str]:
         return [pipeline.gemini_llm_model]
     return deduplicate_models([pipeline.gemini_llm_model, *pipeline.gemini_llm_candidates])
 
-
 def generate_content_with_failover(
     pipeline: "RAGPipeline",
     prompt: str,
     temperature: Optional[float] = None,
     max_output_tokens: Optional[int] = None,
+    response_mime_type: Optional[str] = None,
 ) -> Tuple[str, bool]:
     errors: List[str] = []
     
@@ -148,6 +148,8 @@ def generate_content_with_failover(
         config_args["temperature"] = temperature
     if max_output_tokens is not None:
         config_args["max_output_tokens"] = max_output_tokens
+    if response_mime_type is not None:
+        config_args["response_mime_type"] = response_mime_type
 
     client = genai.Client(api_key=pipeline.gemini_api_key)
 

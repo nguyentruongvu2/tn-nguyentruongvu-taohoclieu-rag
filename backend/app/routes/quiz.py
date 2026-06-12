@@ -30,7 +30,7 @@ router = APIRouter(prefix="/quiz", tags=["quiz"])
 # ── Models ────────────────────────────────────────────────────────────────────
 
 class AnalyzeContentRequest(BaseModel):
-    lesson_content: str = Field(..., min_length=10)
+    lesson_content: str = Field(..., min_length=5)
 
 class AnalyzeContentResponse(BaseModel):
     suggested_count: int
@@ -38,7 +38,7 @@ class AnalyzeContentResponse(BaseModel):
     reasoning: str
 
 class GenerateQuizRequest(BaseModel):
-    lesson_content: str = Field(..., min_length=20)
+    lesson_content: str = Field(..., min_length=5)
     num_questions: int = Field(default=5, ge=1, le=20)
     variation_seed: int | None = Field(default=None)
     bloom_level: str | None = Field(default="mix")
@@ -51,6 +51,7 @@ class QuizQuestion(BaseModel):
     options: list[str]
     correct_answer: str
     explanation: str
+    explanations: dict[str, str] = Field(default_factory=dict)
     restudy_hint: str = Field(default="") # Hint for what section to re-read if wrong
     type: str
 
@@ -91,21 +92,50 @@ RULES:
 - QUESTION DESIGN (SCENARIO-BASED): For "application" and "analysis" questions, you MUST create a practical, real-world scenario or problem statement rather than asking direct theoretical questions.
 - DISTRACTOR DESIGN (CRITICAL): The 3 incorrect options (distractors) must NOT be obviously wrong. They MUST represent common student misconceptions, partial understandings, or logical errors based on the context.
 - Natural Vietnamese, domain-appropriate technical terms.
-- Explanation: 1-2 sentences. You MUST explain WHY the correct answer is right AND briefly point out the logical flaw in the most tempting distractor.
+- Option Explanations (CRITICAL): You MUST provide a detailed explanation for each of the four choices (A, B, C, D) in Vietnamese in the "explanations" object. Explain why the correct option is correct, and point out the specific logical flaw or error in understanding for each incorrect option. Do not genericize; be specific to each choice.
+- General Explanation: Provide a 1-2 sentence overall explanation in the "explanation" field (usually explaining why the correct answer is right) for backward compatibility.
 - Restudy Hint: Identify the specific section or concept name from the lesson that the student should review if they fail this question (e.g., "Mục 2.1: Cách hoạt động của RAM").
 
 OUTPUT: Return ONLY valid JSON, no markdown, no extra text:
-{{"questions":[{{"type":"...","question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"correct_answer":"A","explanation":"...","restudy_hint":"..."}}]}}
+{{"questions":[{{"type":"...","question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"correct_answer":"A","explanation":"...","explanations":{{"A":"...","B":"...","C":"...","D":"..."}},"restudy_hint":"..."}}]}}
 
 LESSON CONTENT:
 {content}
 """
 
 
+def _detect_bloom_levels_from_instruction(instruction: str) -> list[str]:
+    if not instruction:
+        return []
+    
+    import unicodedata
+    normalized = unicodedata.normalize("NFD", instruction)
+    stripped = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+    stripped = stripped.replace("đ", "d").replace("Đ", "D").lower()
+    
+    detected = []
+    
+    if any(k in stripped for k in ["nhan biet", "nho", "knowledge"]):
+        detected.append("knowledge")
+    if any(k in stripped for k in ["thong hieu", "hieu", "comprehension"]):
+        detected.append("comprehension")
+    if any(k in stripped for k in ["ap dung", "van dung", "application"]):
+        detected.append("application")
+    if any(k in stripped for k in ["phan tich", "analysis"]):
+        detected.append("analysis")
+        
+    return detected
+
+
 def _build_prompt(content: str, n: int, seed: int, bloom_level: str = "mix", custom_instruction: str = "") -> str:
     type_keys = list(_Q_TYPES.keys())
     
-    if bloom_level and bloom_level.lower() in type_keys:
+    # Check if bloom level is explicitly mentioned in custom instruction
+    detected = _detect_bloom_levels_from_instruction(custom_instruction)
+    
+    if detected:
+        assigned = [detected[i % len(detected)] for i in range(n)]
+    elif bloom_level and bloom_level.lower() in type_keys:
         assigned = [bloom_level.lower()] * n
     else:
         assigned = [type_keys[i % len(type_keys)] for i in range(n)]
@@ -122,7 +152,7 @@ def _build_prompt(content: str, n: int, seed: int, bloom_level: str = "mix", cus
     )
 
     # Scale content: more questions = more context, but cap waste
-    max_chars = min(2500 + n * 350, 6000)
+    max_chars = min(10000 + n * 2000, 80000)
     
     custom_rule = f"\n- CUSTOM USER INSTRUCTION (CRITICAL): {custom_instruction}\n" if custom_instruction else ""
 
@@ -136,15 +166,92 @@ def _build_prompt(content: str, n: int, seed: int, bloom_level: str = "mix", cus
 
 # ── JSON helpers ──────────────────────────────────────────────────────────────
 
+def _repair_json(s: str) -> str:
+    s = s.strip()
+    # Find the first '{' to start parsing
+    start_idx = s.find('{')
+    if start_idx == -1:
+        return s
+    s = s[start_idx:]
+    
+    in_quote = False
+    escape = False
+    stack = []
+    clean_chars = []
+    
+    for char in s:
+        if escape:
+            clean_chars.append(char)
+            escape = False
+            continue
+        if char == '\\':
+            clean_chars.append(char)
+            escape = True
+            continue
+        if char == '"':
+            in_quote = not in_quote
+            clean_chars.append(char)
+            continue
+        
+        if not in_quote:
+            if char == '{':
+                stack.append('}')
+            elif char == '[':
+                stack.append(']')
+            elif char in ('}', ']'):
+                if stack and stack[-1] == char:
+                    stack.pop()
+                else:
+                    continue
+        clean_chars.append(char)
+        
+    repaired = "".join(clean_chars)
+    if in_quote:
+        repaired += '"'
+    while stack:
+        repaired += stack.pop()
+        
+    return repaired
+
+
+def _heal_malformed_quiz_json(s: str) -> str:
+    # Repair options array that forgot to close before other question fields
+    # Example: "options": [ "A. ...", "B. ...", "C. ...", "D. ...", "correct_answer": "A" ... ]
+    # We find the 4th option and close the bracket.
+    import re
+    pattern = r'("options"\s*:\s*\[\s*(?:"(?:[^"\\]|\\.)*"\s*,\s*){3}"(?:[^"\\]|\\.)*")\s*,\s*((?:\s*"[a-zA-Z_]+"\s*:\s*(?:"(?:[^"\\]|\\.)*"|\d+|true|false|null)\s*,?)+)\s*\]'
+    
+    def repl(m):
+        options_part = m.group(1)
+        rest_part = m.group(2)
+        rest_part = rest_part.rstrip().rstrip(',')
+        return f"{options_part}\n      ],\n      {rest_part}"
+        
+    return re.sub(pattern, repl, s)
+
+
 def _extract_json(raw: str) -> dict:
     cleaned = re.sub(r"```(?:json)?", "", raw, flags=re.IGNORECASE).strip().strip("`").strip()
+    cleaned = _heal_malformed_quiz_json(cleaned)
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
         pass
+    
+    # Try self-healing JSON repair
+    try:
+        repaired = _repair_json(cleaned)
+        return json.loads(repaired)
+    except Exception:
+        pass
+        
     match = re.search(r"\{.*\}", cleaned, re.DOTALL)
     if match:
-        return json.loads(match.group())
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+    logger.error("Failed to parse JSON. Raw LLM response was:\n%s", raw)
     raise ValueError("No valid JSON in LLM response")
 
 
@@ -162,30 +269,48 @@ def _validate(raw: dict) -> bool:
     )
 
 
-# ── LLM call (async-wrapped to avoid blocking event loop) ────────────────────
-
 def _call_llm_sync(prompt: str, n: int) -> str:
     """Sync LLM call — runs in thread pool via asyncio.to_thread."""
-    # Scale output budget: ~200 tokens/question overhead
-    max_output = min(800 + n * 220, 2800)
+    # Scale output budget: ~500 tokens/question overhead for detailed Vietnamese explanations
+    max_output = min(1500 + n * 500, 8192)
     raw_text, _ = rag_pipeline._generate_content_with_failover(
         prompt,
         temperature=0.65,
         max_output_tokens=max_output,
+        response_mime_type="application/json",
     )
     return raw_text
 
 
 async def _call_llm(lesson_content: str, num_questions: int, seed: int, bloom_level: str = "mix", custom_instruction: str = "") -> list[dict]:
-    prompt = _build_prompt(lesson_content, num_questions, seed, bloom_level, custom_instruction)
-    # Run blocking LLM I/O in thread pool — frees event loop for other requests
-    raw_text = await asyncio.to_thread(_call_llm_sync, prompt, num_questions)
-    parsed = _extract_json(raw_text)
-    questions = parsed.get("questions", [])
-    if not isinstance(questions, list):
-        raise ValueError("LLM returned non-list questions")
-    return questions
-
+    attempts = 3
+    last_exc = None
+    current_seed = seed
+    
+    for attempt in range(1, attempts + 1):
+        try:
+            prompt = _build_prompt(lesson_content, num_questions, current_seed, bloom_level, custom_instruction)
+            logger.info("Calling LLM to generate quiz (attempt %d/%d, seed=%d)", attempt, attempts, current_seed)
+            raw_text = await asyncio.to_thread(_call_llm_sync, prompt, num_questions)
+            parsed = _extract_json(raw_text)
+            questions = parsed.get("questions", [])
+            if not isinstance(questions, list):
+                raise ValueError("LLM returned non-list questions")
+            return questions
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "Quiz generation attempt %d failed: %s. Retrying with new seed...",
+                attempt,
+                exc
+            )
+            # Change seed so LLM outputs a different response next time
+            current_seed = (current_seed + random.randint(1, 1000)) % 10000
+            if attempt < attempts:
+                await asyncio.sleep(1.5)
+                
+    logger.error("All %d attempts to generate quiz failed.", attempts)
+    raise last_exc
 
 # ── Endpoint ──────────────────────────────────────────────────────────────────
 
@@ -208,6 +333,7 @@ LESSON CONTENT:
         prompt,
         temperature=0.3,
         max_output_tokens=400,
+        response_mime_type="application/json",
     )
     return raw_text
 
@@ -257,12 +383,23 @@ async def generate_quiz(body: GenerateQuizRequest):
         q_type = str(raw.get("type", "knowledge")).lower().strip()
         if q_type not in _VALID_TYPES:
             q_type = "knowledge"
+        
+        # Parse or fallback explanations
+        raw_exps = raw.get("explanations", {})
+        if not isinstance(raw_exps, dict):
+            raw_exps = {}
+        exps = {}
+        for choice in ["A", "B", "C", "D"]:
+            val = raw_exps.get(choice) or raw_exps.get(choice.lower()) or raw["explanation"]
+            exps[choice] = str(val).strip()
+
         questions.append(QuizQuestion(
             id=f"q{len(questions) + 1}",
             question=raw["question"].strip(),
             options=[str(o).strip() for o in raw["options"]],
             correct_answer=raw["correct_answer"].upper().strip(),
             explanation=raw["explanation"].strip(),
+            explanations=exps,
             restudy_hint=str(raw.get("restudy_hint", "")).strip(),
             type=q_type,
         ))

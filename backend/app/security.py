@@ -103,6 +103,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> dict[str, Any]:
         "username": str(user["username"]),
         "email": str(user.get("email") or ""),
         "role": str(user["role"]),
+        "avatar_url": user.get("avatar_url"),
     }
 
 
@@ -125,8 +126,32 @@ async def default_identifier(request: Request):
         return forwarded.split(",")[0]
     return request.client.host if request.client else "127.0.0.1"
 
+
+class SafeRateLimiter(RateLimiter):
+    async def __call__(self, request: Request, response: Any = None):
+        from fastapi_limiter import FastAPILimiter
+        if not hasattr(FastAPILimiter, "redis") or FastAPILimiter.redis is None:
+            # Skip rate limiting when Redis is not initialized (e.g. local dev without running Redis)
+            # This allows testing the API locally without zero-config dependencies failing
+            return
+        try:
+            return await super().__call__(request, response)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("Rate limiting skipped due to connection error: %s", e)
+            return
+
 # We provide a dependency for global usage (e.g. 100 requests per 60 seconds)
-rate_limiter = RateLimiter(times=RATE_LIMIT_PER_MINUTE, seconds=60, identifier=default_identifier)
+import inspect
+_sig = inspect.signature(RateLimiter.__init__)
+if "times" in _sig.parameters:
+    rate_limiter = SafeRateLimiter(times=RATE_LIMIT_PER_MINUTE, seconds=60, identifier=default_identifier)
+else:
+    from pyrate_limiter import Limiter, Rate, Duration
+    rate_limiter = SafeRateLimiter(
+        limiter=Limiter(Rate(RATE_LIMIT_PER_MINUTE, Duration.MINUTE)),
+        identifier=default_identifier,
+    )
 
 def enforce_rate_limit(user_id: int) -> None:
     """

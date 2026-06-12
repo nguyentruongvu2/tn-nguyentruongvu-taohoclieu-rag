@@ -55,6 +55,7 @@ from .documents import (  # noqa: F401
     get_document_for_export,
     set_document_sections,
     update_project_section,
+    update_document_progress,
 )
 
 from .projects import (  # noqa: F401
@@ -81,6 +82,7 @@ from .projects import (  # noqa: F401
     delete_chat_conversation,
     append_chat_message,
     list_chat_messages,
+    get_projects_referencing_document,
 )
 
 from .quiz import (  # noqa: F401

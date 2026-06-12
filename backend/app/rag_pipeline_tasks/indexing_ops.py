@@ -4,7 +4,10 @@ import json
 import logging
 import os
 import re
+import uuid
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+from qdrant_client.http import models
 
 from .embedding_ops import embed_document, local_embedding, normalize_embedding_batch
 from ..chunking import chunk_markdown
@@ -381,14 +384,6 @@ def index_markdown(
         file_name=file_name,
     )
 
-    collection = pipeline._collection(collection_name)
-
-    # Keep collection clean when re-indexing the same source file.
-    try:
-        collection.delete(where={"source": source})
-    except Exception:
-        pass
-
     ids: List[str] = []
     texts: List[str] = []
     metadatas: List[Dict[str, object]] = []
@@ -463,44 +458,88 @@ def index_markdown(
         metadatas.append(metadata)
         embeddings.append(embed_document(pipeline, chunk_text))
 
+        if doc_id:
+            try:
+                progress = 30 + int(((idx + 1) / total_docs) * 65)
+                from ..db.documents import update_document_progress
+                update_document_progress(doc_id, progress=min(95, progress), status="processing")
+            except Exception as e:
+                logger.warning("Failed to update progress: %s", e)
+
     embeddings, batch_dims = normalize_embedding_batch(texts, embeddings)
+    actual_dims = batch_dims or 3072
+
+    collection_title = pipeline._collection(collection_name, dims=actual_dims)
+
+    # Keep collection clean when re-indexing the same source file.
+    try:
+        pipeline.qdrant_client.delete(
+            collection_name=collection_title,
+            points_selector=models.FilterSelector(
+                filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="source",
+                            match=models.MatchValue(value=source)
+                        )
+                    ]
+                )
+            )
+        )
+    except Exception as e:
+        logger.debug("Failed to delete old chunks for source %s: %s", source, e)
+
+    try:
+        col_info = pipeline.qdrant_client.get_collection(collection_name=collection_title)
+        expected_dims = col_info.config.params.vectors.size
+    except Exception:
+        expected_dims = actual_dims
+
+    if expected_dims != actual_dims:
+        logger.warning(
+            "Collection '%s' expects dims=%s but batch dims=%s. "
+            "Re-generating embeddings with local embeddings sized to expected dimension.",
+            collection_title,
+            expected_dims,
+            actual_dims,
+        )
+        embeddings = [local_embedding(text, dims=expected_dims) for text in texts]
 
     if ids:
+        points = []
+        for chunk_id, text, metadata, vector in zip(ids, texts, metadatas, embeddings):
+            uuid_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, chunk_id))
+            payload = {
+                **metadata,
+                "document": text,
+                "chunk_id": chunk_id
+            }
+            points.append(
+                models.PointStruct(
+                    id=uuid_id,
+                    vector=vector,
+                    payload=payload
+                )
+            )
+        # Batch upsert to Qdrant to avoid exceeding the HTTP payload limit (32MB)
+        batch_size = 100
+        for offset in range(0, len(points), batch_size):
+            batch = points[offset : offset + batch_size]
+            pipeline.qdrant_client.upsert(
+                collection_name=collection_title,
+                points=batch
+            )
+
+    if doc_id:
         try:
-            collection.upsert(
-                ids=ids,
-                documents=texts,
-                metadatas=metadatas,
-                embeddings=embeddings,
-            )
-        except Exception as exc:
-            msg = str(exc)
-            match = _DIMENSION_MISMATCH_RE.search(msg)
-            if not match:
-                raise
-
-            expected_dims = int(match.group(1))
-            got_dims = int(match.group(2))
-            logger.warning(
-                "Collection '%s' expects dims=%s but batch dims=%s (dominant=%s). "
-                "Retrying upsert with local embeddings sized to expected dimension.",
-                collection.name,
-                expected_dims,
-                got_dims,
-                batch_dims,
-            )
-
-            fallback_embeddings = [local_embedding(text, dims=expected_dims) for text in texts]
-            collection.upsert(
-                ids=ids,
-                documents=texts,
-                metadatas=metadatas,
-                embeddings=fallback_embeddings,
-            )
+            from ..db.documents import update_document_progress
+            update_document_progress(doc_id, progress=100, status="ready")
+        except Exception as e:
+            logger.warning("Failed to finalize progress update: %s", e)
 
     return {
         "chunks_indexed": len(ids),
-        "collection": collection.name,
+        "collection": collection_title,
         "statistics": {
             "total_chunks": stats.total_chunks,
             "chunks_refined": refined_chunks,

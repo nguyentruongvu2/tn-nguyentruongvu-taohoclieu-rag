@@ -311,6 +311,7 @@ def login_user(email: str, password: str, ip_address: str | None) -> dict[str, A
                 "username": str(user["username"]),
                 "email": str(user.get("email") or normalized_email),
                 "role": str(user["role"]),
+                "avatar_url": user.get("avatar_url"),
             },
         },
     }
@@ -376,7 +377,12 @@ def confirm_password_reset(token: str, new_password: str, confirm_password: str)
     }
 
 
-def update_my_profile(user_id: int, username: str | None, email: str | None) -> dict[str, Any]:
+def update_my_profile(
+    user_id: int, 
+    username: str | None = None, 
+    email: str | None = None,
+    avatar_url: str | None = None
+) -> dict[str, Any]:
     # Check for email collision
     if email:
         normalized_email = _normalize_email(email)
@@ -400,7 +406,7 @@ def update_my_profile(user_id: int, username: str | None, email: str | None) -> 
                 error_code="USERNAME_IN_USE",
             )
 
-    updated_user = update_user_profile(user_id, username, email)
+    updated_user = update_user_profile(user_id, username, email, avatar_url)
     if not updated_user:
         raise _auth_error(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -416,6 +422,7 @@ def update_my_profile(user_id: int, username: str | None, email: str | None) -> 
             "username": str(updated_user["username"]),
             "email": str(updated_user.get("email") or ""),
             "role": str(updated_user["role"]),
+            "avatar_url": updated_user.get("avatar_url"),
         }
     }
 

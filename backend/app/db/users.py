@@ -235,7 +235,12 @@ def update_user_password(user_id: int, password_hash: str) -> bool:
     return updated
 
 
-def update_user_profile(user_id: int, username: str | None, email: str | None) -> dict[str, Any] | None:
+def update_user_profile(
+    user_id: int, 
+    username: str | None = None, 
+    email: str | None = None,
+    avatar_url: str | None = None
+) -> dict[str, Any] | None:
     updates = []
     params  = []
     if username is not None:
@@ -244,6 +249,9 @@ def update_user_profile(user_id: int, username: str | None, email: str | None) -
     if email is not None:
         updates.append("email = %s")
         params.append(email.strip().lower())
+    if avatar_url is not None:
+        updates.append("avatar_url = %s")
+        params.append(avatar_url.strip())
 
     if not updates:
         return get_user_by_id(user_id)

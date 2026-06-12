@@ -10,8 +10,9 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Upload directory configuration
-UPLOAD_DIR = os.getenv("UPLOAD_DIR", "../uploads")
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", os.path.abspath(os.path.join(os.path.dirname(__file__), "../../uploads")))
 UPLOAD_DIR_PATH = Path(UPLOAD_DIR).resolve()
+
 
 # Create uploads directory if it doesn't exist
 UPLOAD_DIR_PATH.mkdir(parents=True, exist_ok=True)

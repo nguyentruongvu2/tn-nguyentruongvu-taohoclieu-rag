@@ -344,7 +344,7 @@ def normalize_section_profile_key(section_title: str) -> str:
         return "example"
     if any(key in label for key in ["tom tat", "tong ket", "summary", "ket luan"]):
         return "summary"
-    if any(key in label for key in ["cau hoi", "on tap", "quiz", "trac nghiem", "bai tap"]):
+    if any(key in label for key in ["cau hoi on tap", "on tap", "quiz", "trac nghiem", "bai tap"]):
         return "quiz"
 
     return "dynamic"

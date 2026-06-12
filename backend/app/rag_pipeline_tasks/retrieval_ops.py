@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
-from chromadb.api.models.Collection import Collection
+from qdrant_client.http import models
 
 from .embedding_ops import embed_query, local_embedding
 
@@ -18,19 +19,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_DIMENSION_MISMATCH_RE = re.compile(
-    r"Collection expecting embedding with dimension of\s+(\d+),\s*got\s+(\d+)",
-    re.IGNORECASE,
-)
-
 
 def tokenize(text: str) -> List[str]:
     return re.findall(r"[a-zA-Z0-9_\-]+", text.lower())
 
 
 def keyword_search(
+    pipeline: "RAGPipeline",
     query: str,
-    collection: Collection,
+    collection_name: str,
     top_k: int,
     source_filter: Optional[str | List[str]] = None,
 ) -> Dict[str, float]:
@@ -38,25 +35,46 @@ def keyword_search(
     if not q_tokens:
         return {}
 
-    if isinstance(source_filter, list):
-        where = {"source": {"$in": source_filter}}
-    else:
-        where = {"source": source_filter} if source_filter else None
-        
-    # OPTIMIZATION 1: Prevent Out-of-Memory (OOM) by capping max docs if no filter
-    limit = None if where else 3000
-    
-    # OPTIMIZATION 2: Only include 'documents' to reduce payload size over IPC/network
-    all_docs = collection.get(include=["documents"], where=where, limit=limit)
-    docs = all_docs.get("documents", []) or []
-    ids = all_docs.get("ids", []) or []
+    must_conditions = []
+    if source_filter:
+        if isinstance(source_filter, list):
+            must_conditions.append(
+                models.FieldCondition(
+                    key="source",
+                    match=models.MatchAny(any=source_filter)
+                )
+            )
+        else:
+            must_conditions.append(
+                models.FieldCondition(
+                    key="source",
+                    match=models.MatchValue(value=source_filter)
+                )
+            )
+
+    scroll_filter = models.Filter(must=must_conditions) if must_conditions else None
+    limit = None if scroll_filter else 3000
+
+    try:
+        scroll_res = pipeline.qdrant_client.scroll(
+            collection_name=collection_name,
+            scroll_filter=scroll_filter,
+            limit=limit or 10000,
+            with_payload=True,
+            with_vectors=False
+        )
+        records, _ = scroll_res
+    except Exception as e:
+        logger.warning("Keyword search scroll failed: %s", e)
+        records = []
+
+    ids = [record.payload.get("chunk_id") or str(record.id) for record in records]
+    docs = [record.payload.get("document", "") for record in records]
 
     scores: List[Tuple[str, float]] = []
     q_len = len(q_tokens)
     
-    # OPTIMIZATION 3: Use a compiled regex for fast boundary-aware token matching
     escaped_tokens = [re.escape(q) for q in q_tokens]
-    # \b matches word boundaries to avoid substring matching (e.g. "to" in "tomato")
     pattern = re.compile(r'\b(' + '|'.join(escaped_tokens) + r')\b')
 
     for doc_id, doc_text in zip(ids, docs):
@@ -65,11 +83,9 @@ def keyword_search(
             
         doc_lower = doc_text.lower()
         
-        # Fast pre-filter using C-optimized substring search
         if not any(q in doc_lower for q in q_tokens):
             continue
 
-        # Exact token matching using C-optimized regex
         matches = set(pattern.findall(doc_lower))
         overlap = len(matches)
         
@@ -90,65 +106,84 @@ def retrieve_hybrid(
     keyword_weight: float = 0.35,
     source_filter: Optional[str | List[str]] = None,
 ) -> List[Dict[str, object]]:
-    collection = pipeline._collection(collection_name)
+    collection_title = pipeline._collection(collection_name)
 
     query_embedding = embed_query(pipeline, query)
-    if isinstance(source_filter, list):
-        where = {"source": {"$in": source_filter}}
-    else:
-        where = {"source": source_filter} if source_filter else None
-    try:
-        vector_raw = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=max(top_k * 4, 10),
-            include=["documents", "metadatas", "distances"],
-            where=where,
-        )
-    except Exception as exc:
-        msg = str(exc)
-        match = _DIMENSION_MISMATCH_RE.search(msg)
-        if not match:
-            raise
+    must_conditions = []
+    if source_filter:
+        if isinstance(source_filter, list):
+            must_conditions.append(
+                models.FieldCondition(
+                    key="source",
+                    match=models.MatchAny(any=source_filter)
+                )
+            )
+        else:
+            must_conditions.append(
+                models.FieldCondition(
+                    key="source",
+                    match=models.MatchValue(value=source_filter)
+                )
+            )
+    query_filter = models.Filter(must=must_conditions) if must_conditions else None
 
-        expected_dims = int(match.group(1))
-        got_dims = int(match.group(2))
+    try:
+        col_info = pipeline.qdrant_client.get_collection(collection_name=collection_title)
+        expected_dims = col_info.config.params.vectors.size
+    except Exception:
+        expected_dims = len(query_embedding)
+
+    if expected_dims != len(query_embedding):
         logger.warning(
             "Embedding dimension mismatch on collection '%s' (expected=%s, got=%s). "
             "Retrying with local query embedding for backward compatibility.",
-            collection.name,
+            collection_title,
             expected_dims,
-            got_dims,
+            len(query_embedding),
         )
+        query_embedding = local_embedding(query, dims=expected_dims)
 
-        fallback_query_embedding = local_embedding(query, dims=expected_dims)
-        vector_raw = collection.query(
-            query_embeddings=[fallback_query_embedding],
-            n_results=max(top_k * 4, 10),
-            include=["documents", "metadatas", "distances"],
-            where=where,
+    try:
+        query_res = pipeline.qdrant_client.query_points(
+            collection_name=collection_title,
+            query=query_embedding,
+            query_filter=query_filter,
+            limit=max(top_k * 4, 10),
+            with_payload=True,
+            with_vectors=False
         )
-
-    v_ids = vector_raw.get("ids", [[]])[0]
-    v_docs = vector_raw.get("documents", [[]])[0]
-    v_metas = vector_raw.get("metadatas", [[]])[0]
-    v_dist = vector_raw.get("distances", [[]])[0]
+        search_res = query_res.points
+    except Exception as exc:
+        logger.warning(
+            "Qdrant vector query failed on collection '%s': %s. Falling back to keyword search.",
+            collection_title,
+            exc,
+        )
+        search_res = []
 
     vector_scores: Dict[str, float] = {}
     vector_payload: Dict[str, Dict[str, object]] = {}
 
-    for doc_id, doc, meta, dist in zip(v_ids, v_docs, v_metas, v_dist):
-        score = 1.0 / (1.0 + float(dist))
-        vector_scores[doc_id] = score
-        vector_payload[doc_id] = {
-            "id": doc_id,
-            "text": doc,
-            "metadata": meta or {},
+    for record in search_res:
+        payload = record.payload or {}
+        chunk_id = payload.get("chunk_id") or str(record.id)
+        score = float(record.score)
+        vector_scores[chunk_id] = score
+        
+        meta = {k: v for k, v in payload.items() if k not in {"document", "chunk_id"}}
+        doc_text = payload.get("document", "")
+
+        vector_payload[chunk_id] = {
+            "id": chunk_id,
+            "text": doc_text,
+            "metadata": meta,
             "vector_score": score,
         }
 
     keyword_scores = keyword_search(
-        query,
-        collection,
+        pipeline=pipeline,
+        query=query,
+        collection_name=collection_title,
         top_k=top_k,
         source_filter=source_filter,
     )
@@ -164,18 +199,29 @@ def retrieve_hybrid(
     blended.sort(key=lambda x: x[1], reverse=True)
     top_ids = [doc_id for doc_id, _ in blended[: top_k * 3]]
 
+    id_to_doc = {}
     if top_ids:
-        fetched = collection.get(ids=top_ids, include=["documents", "metadatas"])
-        id_to_doc = {
-            doc_id: (doc, metadata)
-            for doc_id, doc, metadata in zip(
-                fetched.get("ids", []),
-                fetched.get("documents", []),
-                fetched.get("metadatas", []),
+        try:
+            qdrant_uuids = [str(uuid.uuid5(uuid.NAMESPACE_DNS, tid)) for tid in top_ids]
+            records_fetched, _ = pipeline.qdrant_client.scroll(
+                collection_name=collection_title,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.HasIdCondition(has_id=qdrant_uuids)
+                    ]
+                ),
+                limit=len(top_ids),
+                with_payload=True,
+                with_vectors=False
             )
-        }
-    else:
-        id_to_doc = {}
+            for record in records_fetched:
+                payload = record.payload or {}
+                chunk_id = payload.get("chunk_id") or str(record.id)
+                doc_text = payload.get("document", "")
+                meta = {k: v for k, v in payload.items() if k not in {"document", "chunk_id"}}
+                id_to_doc[chunk_id] = (doc_text, meta)
+        except Exception as exc:
+            logger.warning("Failed to fetch top IDs from Qdrant: %s", exc)
 
     merged_results: List[Dict[str, object]] = []
     for doc_id, hybrid_score in blended[: top_k * 3]:

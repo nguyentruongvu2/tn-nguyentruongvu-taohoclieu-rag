@@ -6,7 +6,9 @@ from pathlib import Path
 import shutil
 
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
+from fastapi.responses import FileResponse
+from ..config import UPLOAD_DIR_PATH
 
 from ..auth_db import (
     count_admin_users,
@@ -19,6 +21,7 @@ from ..auth_db import (
     list_usage,
     list_users,
     set_user_active,
+    update_user_profile,
 )
 from ..auth_service import (
     login_user,
@@ -78,6 +81,7 @@ class SimpleResponse(BaseModel):
 class UpdateProfileRequest(BaseModel):
     username: str | None = None
     email: str | None = None
+    avatar_url: str | None = None
 
 
 class UpdatePasswordRequest(BaseModel):
@@ -190,6 +194,7 @@ async def update_profile(
         user_id=int(current_user["id"]),
         username=payload.username,
         email=payload.email,
+        avatar_url=payload.avatar_url,
     )
 
 
@@ -306,3 +311,57 @@ async def admin_delete_user(
         "upload_dirs_deleted": removed_upload_dirs,
         "message": "User and related data deleted",
     }
+
+
+@router.post("/me/avatar")
+async def upload_avatar(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    # Validate extension
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Định dạng ảnh không hợp lệ. Chỉ hỗ trợ PNG, JPG, JPEG, WEBP, GIF."
+        )
+
+    user_id = current_user["id"]
+    avatar_dir = UPLOAD_DIR_PATH / "users" / str(user_id) / "avatar"
+
+    # Recreate dir to clean up old avatar with different extension
+    if avatar_dir.exists():
+        shutil.rmtree(avatar_dir)
+    avatar_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = f"avatar{ext}"
+    target_file = avatar_dir / filename
+
+    try:
+        with open(target_file, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Không thể lưu file ảnh: {exc}"
+        )
+
+    # Relative path is stored in database
+    avatar_url = f"/api/auth/profile/avatar/{user_id}"
+    update_user_profile(user_id=user_id, avatar_url=avatar_url)
+
+    return {
+        "success": True,
+        "message": "Cập nhật ảnh đại diện thành công.",
+        "avatar_url": avatar_url
+    }
+
+
+@router.get("/profile/avatar/{user_id}")
+async def get_avatar(user_id: int):
+    avatar_dir = UPLOAD_DIR_PATH / "users" / str(user_id) / "avatar"
+    if avatar_dir.exists() and avatar_dir.is_dir():
+        for f in avatar_dir.iterdir():
+            if f.is_file() and f.name.startswith("avatar."):
+                return FileResponse(str(f))
+    raise HTTPException(status_code=404, detail="Avatar không tồn tại.")

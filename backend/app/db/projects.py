@@ -37,7 +37,7 @@ def create_project(user_id: int, title: str) -> dict[str, Any]:
 def create_editor_project(
     user_id: int, title: str, description: str,
     knowledge_base_ids: list[str], level: str, doc_format: str,
-    teaching_tone: str = "",
+    teaching_tone: str = "", syllabus_doc_id: str | None = None,
 ) -> dict[str, Any]:
     project_id  = str(uuid.uuid4())
     now         = _utc_now()
@@ -46,10 +46,10 @@ def create_editor_project(
     safe_tone   = (teaching_tone or "").strip().lower()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO projects(id, user_id, title, description, knowledge_base_ids_json, level, format, teaching_tone, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "INSERT INTO projects(id, user_id, title, description, knowledge_base_ids_json, level, format, teaching_tone, syllabus_doc_id, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (project_id, int(user_id), title.strip(), (description or "").strip(),
              kb_json, (level or "basic").strip() or "basic",
-             (doc_format or "markdown").strip() or "markdown", safe_tone, now, now),
+             (doc_format or "markdown").strip() or "markdown", safe_tone, syllabus_doc_id, now, now),
         )
         conn.commit()
     row = get_project_by_id(project_id)
@@ -93,6 +93,7 @@ def list_editor_projects(user_id: int, role: str, limit: int = 100, offset: int 
             "level":             str(row.get("level") or "basic"),
             "format":            str(row.get("format") or "markdown"),
             "teaching_tone":     str(row.get("teaching_tone") or ""),
+            "syllabus_doc_id":   row.get("syllabus_doc_id"),
             "created_at":        str(row.get("created_at") or ""),
             "updated_at":        str(row.get("updated_at") or row.get("created_at") or ""),
             "sections_count":    len(sections),
@@ -142,12 +143,15 @@ def delete_project_for_user(project_id: str, user_id: int, role: str) -> bool:
     return deleted
 
 
+_SENTINEL = object()
+
 def update_editor_project_for_user(
     project_id: str, user_id: int, role: str,
     title: str | None = None, description: str | None = None,
     knowledge_base_ids: list[str] | None = None,
     level: str | None = None, doc_format: str | None = None,
     teaching_tone: str | None = None,
+    syllabus_doc_id: str | None | object = _SENTINEL,
 ) -> dict[str, Any] | None:
     existing = get_project_for_user(project_id, user_id, role)
     if not existing:
@@ -158,6 +162,12 @@ def update_editor_project_for_user(
     merged_level    = str(level if level is not None else existing.get("level") or "basic").strip() or "basic"
     merged_format   = str(doc_format if doc_format is not None else existing.get("format") or "markdown").strip() or "markdown"
     merged_tone     = str(teaching_tone if teaching_tone is not None else existing.get("teaching_tone") or "").strip().lower()
+    
+    if syllabus_doc_id is _SENTINEL:
+        merged_syllabus = existing.get("syllabus_doc_id")
+    else:
+        merged_syllabus = syllabus_doc_id
+
     if knowledge_base_ids is None:
         merged_kb = [str(i).strip() for i in existing.get("knowledge_base_ids", []) if str(i).strip()]
     else:
@@ -166,13 +176,13 @@ def update_editor_project_for_user(
     with _connect() as conn:
         if role == "admin":
             conn.execute(
-                "UPDATE projects SET title=%s,description=%s,knowledge_base_ids_json=%s,level=%s,format=%s,teaching_tone=%s,updated_at=%s WHERE id=%s",
-                (merged_title, merged_desc, kb_json, merged_level, merged_format, merged_tone, now, project_id),
+                "UPDATE projects SET title=%s,description=%s,knowledge_base_ids_json=%s,level=%s,format=%s,teaching_tone=%s,syllabus_doc_id=%s,updated_at=%s WHERE id=%s",
+                (merged_title, merged_desc, kb_json, merged_level, merged_format, merged_tone, merged_syllabus, now, project_id),
             )
         else:
             conn.execute(
-                "UPDATE projects SET title=%s,description=%s,knowledge_base_ids_json=%s,level=%s,format=%s,teaching_tone=%s,updated_at=%s WHERE id=%s AND user_id=%s",
-                (merged_title, merged_desc, kb_json, merged_level, merged_format, merged_tone, now, project_id, int(user_id)),
+                "UPDATE projects SET title=%s,description=%s,knowledge_base_ids_json=%s,level=%s,format=%s,teaching_tone=%s,syllabus_doc_id=%s,updated_at=%s WHERE id=%s AND user_id=%s",
+                (merged_title, merged_desc, kb_json, merged_level, merged_format, merged_tone, merged_syllabus, now, project_id, int(user_id)),
             )
         conn.commit()
     updated = get_project_for_user(project_id, user_id, role)
@@ -360,6 +370,7 @@ def get_editor_project_detail_for_user(project_id: str, user_id: int, role: str)
         "level":             str(project.get("level") or "basic"),
         "format":            str(project.get("format") or "markdown"),
         "teaching_tone":     str(project.get("teaching_tone") or ""),
+        "syllabus_doc_id":   project.get("syllabus_doc_id"),
         "created_at":        str(project.get("created_at") or ""),
         "updated_at":        str(project.get("updated_at") or project.get("created_at") or ""),
         "sections":          sections,
@@ -508,3 +519,109 @@ def list_chat_messages(conversation_id: str, limit: int = 40) -> list[dict[str, 
             msg["created_at"] = msg["created_at"].isoformat()
             
     return ordered
+
+
+def get_projects_referencing_document(document_id: str, user_id: int) -> list[str]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT title FROM projects WHERE knowledge_base_ids_json @> %s::jsonb AND user_id = %s",
+            (json.dumps([str(document_id)]), int(user_id)),
+        ).fetchall()
+    return [str(row["title"]) for row in rows]
+
+
+def add_editor_section_history(
+    project_id: str, section_id: str | None, prompt: str | None, content_markdown: str
+) -> None:
+    now = _utc_now()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO project_editor_history (project_id, section_id, prompt, content_markdown, created_at)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (project_id, section_id, prompt, content_markdown, now)
+        )
+        conn.commit()
+
+
+def list_editor_section_history(project_id: str, section_id: str | None = None) -> list[dict[str, Any]]:
+    with _connect() as conn:
+        if section_id:
+            rows = conn.execute(
+                """
+                SELECT id, project_id, section_id, prompt, content_markdown, created_at
+                FROM project_editor_history
+                WHERE project_id = %s AND section_id = %s
+                ORDER BY created_at DESC
+                """,
+                (project_id, section_id)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, project_id, section_id, prompt, content_markdown, created_at
+                FROM project_editor_history
+                WHERE project_id = %s
+                ORDER BY created_at DESC
+                """,
+                (project_id,)
+            ).fetchall()
+    
+    return [
+        {
+            "id": r["id"],
+            "project_id": r["project_id"],
+            "section_id": r["section_id"],
+            "prompt": r["prompt"],
+            "content_markdown": r["content_markdown"],
+            "created_at": str(r["created_at"]),
+        }
+        for r in rows
+    ]
+
+
+def get_editor_section_history_entry(history_id: int) -> dict[str, Any] | None:
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT id, project_id, section_id, prompt, content_markdown, created_at
+            FROM project_editor_history
+            WHERE id = %s
+            """,
+            (int(history_id),)
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "project_id": row["project_id"],
+        "section_id": row["section_id"],
+        "prompt": row["prompt"],
+        "content_markdown": row["content_markdown"],
+        "created_at": str(row["created_at"]),
+    }
+
+
+def reorder_project_editor_sections(project_id: str, section_ids: list[str], user_id: int, role: str) -> bool:
+    now = _utc_now()
+    with _connect() as conn:
+        if role != "admin":
+            project_check = conn.execute(
+                "SELECT 1 FROM projects WHERE id = %s AND user_id = %s",
+                (project_id, int(user_id)),
+            ).fetchone()
+            if not project_check:
+                return False
+        
+        for idx, sid in enumerate(section_ids):
+            conn.execute(
+                "UPDATE project_editor_sections SET order_index = %s, updated_at = %s WHERE id = %s AND project_id = %s",
+                (idx, now, sid, project_id),
+            )
+        conn.execute("UPDATE projects SET updated_at = %s WHERE id = %s", (now, project_id))
+        conn.commit()
+    return True
+
+
+

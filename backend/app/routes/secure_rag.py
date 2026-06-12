@@ -17,7 +17,7 @@ import os
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, BackgroundTasks
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 
 from ..auth_db import (
@@ -101,8 +101,70 @@ USER_UPLOAD_ROOT = Path(os.getenv("UPLOAD_DIR", "./uploads")).resolve() / "users
 USER_UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 
 
+def process_uploaded_document_task(
+    document_id: str,
+    user_id: int,
+    file_name: str,
+    file_ext: str,
+    data: bytes,
+    stored_path: Path,
+    source_tag: str,
+):
+    try:
+        from ..db.documents import update_document_progress, update_document_processing_result
+        
+        # Step 1: Extraction
+        update_document_progress(document_id, progress=10, status="processing")
+        
+        markdown, markdown_for_index, pages, ocr_quality, ocr_used = _extract_and_clean_document(
+            data=data, file_ext=file_ext
+        )
+        
+        if not markdown_for_index.strip() or not markdown.strip():
+            raise ValueError(OCR_UNCLEAR_MESSAGE)
+            
+        update_document_progress(document_id, progress=30, status="processing")
+        
+        # Step 2: Indexing (Embedding is handled in loop and updates progress from 30% to 95%)
+        indexed = rag_pipeline.index_markdown(
+            markdown=markdown_for_index,
+            source=source_tag,
+            collection_name=None,
+            chunk_size=1200,
+            chunk_overlap=120,
+            total_pages=pages,
+            doc_id=document_id,
+            file_name=file_name,
+        )
+        
+        collection = str(indexed.get("collection", ""))
+        chunks = int(indexed.get("chunks_indexed", 0))
+        
+        # Step 3: Finalize
+        update_document_processing_result(
+            document_id=document_id,
+            markdown=markdown,
+            collection_name=collection,
+            chunks_count=chunks,
+            embeddings_count=chunks,
+            status="ready",
+        )
+        update_document_progress(document_id, progress=100, status="ready")
+        
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Background document processing failed for {document_id}: {e}", exc_info=True)
+        try:
+            from ..db.documents import update_document_progress
+            update_document_progress(document_id, progress=0, status="failed", error=str(e))
+        except Exception:
+            pass
+
+
 @router.post("/upload", response_model=SecureUploadResponse)
 async def secure_upload(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     ocr_mode: str = Query("auto", description="Deprecated"),
     current_user: dict = Depends(get_current_user),
@@ -123,61 +185,44 @@ async def secure_upload(
     stored_path = user_dir / stored_name
     stored_path.write_bytes(data)
 
-    try:
-        markdown, markdown_for_index, pages, ocr_quality, ocr_used = await asyncio.wait_for(
-            asyncio.to_thread(_extract_and_clean_document, data=data, file_ext=file_ext),
-            timeout=600.0,
-        )
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="Extraction timed out")
-
-    if not markdown_for_index.strip() or not markdown.strip():
-        raise HTTPException(status_code=422, detail=OCR_UNCLEAR_MESSAGE)
-
     source_tag = f"u{current_user['id']}-{uuid.uuid4().hex}"
     document_id = str(uuid.uuid4())
-    try:
-        indexed = await asyncio.wait_for(
-            asyncio.to_thread(
-                rag_pipeline.index_markdown,
-                markdown=markdown_for_index,
-                source=source_tag,
-                collection_name=None,
-                chunk_size=1200,
-                chunk_overlap=120,
-                total_pages=pages,
-                doc_id=document_id,
-                file_name=file.filename or "document.pdf",
-            ),
-            timeout=600.0,
-        )
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="Indexing timed out")
-
-    collection = str(indexed.get("collection", ""))
-    chunks = int(indexed.get("chunks_indexed", 0))
+    
+    # Pre-create the document record with status "processing"
     doc = create_document(
         user_id=current_user["id"],
         original_filename=file.filename or "document.pdf",
         stored_file_path=str(stored_path),
-        markdown=markdown,
+        markdown="",
         source_tag=source_tag,
-        collection_name=collection,
-        chunks_count=chunks,
-        embeddings_count=chunks,
-        status="ready",
+        collection_name="",
+        chunks_count=0,
+        embeddings_count=0,
+        status="processing",
         document_id=document_id,
+    )
+
+    # Launch background processing task
+    background_tasks.add_task(
+        process_uploaded_document_task,
+        document_id=document_id,
+        user_id=current_user["id"],
+        file_name=file.filename or "document.pdf",
+        file_ext=file_ext,
+        data=data,
+        stored_path=stored_path,
+        source_tag=source_tag,
     )
 
     return SecureUploadResponse(
         success=True,
         document_id=str(doc["id"]),
         file_name=str(doc["original_filename"]),
-        collection=collection,
-        chunks_indexed=chunks,
-        quality=ocr_quality,
-        ocr_used=ocr_used,
-        message="Document uploaded and indexed",
+        collection="",
+        chunks_indexed=0,
+        quality="medium",
+        ocr_used=False,
+        message="Tệp đã tải lên máy chủ. Đang tiến hành xử lý...",
     )
 
 
@@ -256,7 +301,14 @@ async def secure_delete_document(
     collection_name = str(doc.get("collection_name") or "") or None
     stored_file_path = str(doc.get("stored_file_path") or "")
 
-    await asyncio.to_thread(rag_pipeline.delete_chunks_by_source, source_tag=source_tag, collection_name=collection_name)
+    delete_result = await asyncio.to_thread(
+        rag_pipeline.delete_chunks_by_source, source_tag=source_tag, collection_name=collection_name
+    )
+    chunks_deleted = delete_result.get("deleted_count", 0)
+
+    # Fallback to database count if Qdrant returns 0 (e.g. if chunks not indexed or empty in collection)
+    if not chunks_deleted and doc:
+        chunks_deleted = doc.get("chunks_count") or doc.get("embeddings_count") or 0
 
     if stored_file_path:
         try:
@@ -264,7 +316,23 @@ async def secure_delete_document(
         except Exception: pass
 
     delete_document(document_id)
-    return SecureDeleteResponse(success=True, document_id=document_id, chunks_deleted=0, message="Deleted")
+    return SecureDeleteResponse(success=True, document_id=document_id, chunks_deleted=chunks_deleted, message="Deleted")
+
+
+@router.get("/documents/{document_id}/references")
+async def secure_document_references(
+    document_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    enforce_rate_limit(current_user["id"])
+    doc = get_document_for_user(document_id, current_user["id"], current_user["role"])
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    from ..auth_db import get_projects_referencing_document
+    projects = get_projects_referencing_document(document_id, current_user["id"])
+    return {"success": True, "projects": projects}
+
 
 
 @router.get("/documents/{document_id}/detail", response_model=SecureDocumentDetailResponse)

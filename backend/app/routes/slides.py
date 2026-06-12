@@ -72,10 +72,6 @@ class SlideItem(BaseModel):
             text = b.strip()
             if not text:
                 continue
-            # Force summarizing bullet to be short (max ~15 words)
-            words = text.split()
-            if len(words) > 15:
-                text = " ".join(words[:15]) + "..."
             cleaned.append(text)
         if not cleaned:
             raise ValueError("bullet_points cannot be empty")
@@ -293,36 +289,71 @@ def _extract_json_array(raw: str) -> list:
 
 
 async def _gen_title_slide(deck_title: str, section_titles: list[str], lesson_preview: str) -> SlideItem:
-    themes = ", ".join(section_titles[:5])
-    prompt = _TITLE_SLIDE_PROMPT.format(deck_title=deck_title, themes=themes, lesson_preview=lesson_preview)
-    raw = await asyncio.to_thread(_llm_sync, prompt, 400)
-    data = _extract_json_object(raw)
-    return SlideItem.model_validate(data)
+    try:
+        themes = ", ".join(section_titles[:5])
+        prompt = _TITLE_SLIDE_PROMPT.format(deck_title=deck_title, themes=themes, lesson_preview=lesson_preview)
+        raw = await asyncio.to_thread(_llm_sync, prompt, 400)
+        data = _extract_json_object(raw)
+        return SlideItem.model_validate(data)
+    except Exception as exc:
+        logger.warning("Failed to generate title slide via LLM, using fallback: %s", exc)
+        return SlideItem(
+            title=deck_title[:150] or "Bài giảng",
+            bullet_points=["Giới thiệu nội dung bài học", "Các chủ đề chính", "Mục tiêu học tập"],
+            speaker_notes="Chào mừng các bạn đến với buổi học hôm nay. Chúng ta sẽ cùng nhau tìm hiểu về chủ đề này.",
+            talking_points=["Giới thiệu giảng viên và môn học", "Tổng quan nội dung chính"],
+            estimated_duration=60,
+        )
 
 
 async def _gen_section_slides(section: dict) -> list[SlideItem]:
     """Call LLM to generate exactly target_count slides."""
-    body_truncated = section["body"][:2800]  # slightly more context for better decisions
     target_count = section["target_count"]
-    prompt = _SECTION_PROMPT.format(
-        target_count=target_count,
-        section_title=section["title"],
-        body=body_truncated,
-    )
-    # Token budget: enough for target_count slides with visual_prompt field
-    tokens = min(400 + target_count * 450, 3200)
-    raw = await asyncio.to_thread(_llm_sync, prompt, tokens)
-    items = _extract_json_array(raw)
-    # Enforce hard cap at target_count to prevent runaway
-    return [SlideItem.model_validate(it) for it in items[:target_count]]
+    try:
+        body_truncated = section["body"][:2800]  # slightly more context for better decisions
+        prompt = _SECTION_PROMPT.format(
+            target_count=target_count,
+            section_title=section["title"],
+            body=body_truncated,
+        )
+        # Token budget: enough for target_count slides with visual_prompt field
+        tokens = min(400 + target_count * 450, 3200)
+        raw = await asyncio.to_thread(_llm_sync, prompt, tokens)
+        items = _extract_json_array(raw)
+        # Enforce hard cap at target_count to prevent runaway
+        return [SlideItem.model_validate(it) for it in items[:target_count]]
+    except Exception as exc:
+        logger.warning("Failed to generate slides for section '%s', using fallback: %s", section["title"], exc)
+        # Generate target_count simple fallback slides
+        fallbacks = []
+        for i in range(target_count):
+            suffix = f" (phần {i+1})" if target_count > 1 else ""
+            fallbacks.append(SlideItem(
+                title=f"{section['title']}{suffix}",
+                bullet_points=["Xem chi tiết nội dung trong tài liệu học tập", "Tìm hiểu các khái niệm liên quan", "Thực hành bài tập vận dụng"],
+                speaker_notes=f"Chúng ta sẽ đi qua nội dung phần {section['title']}. Hãy theo dõi tài liệu và slide.",
+                talking_points=[f"Giới thiệu chủ đề {section['title']}"],
+                estimated_duration=90,
+            ))
+        return fallbacks
 
 
 async def _gen_summary_slide(deck_title: str, section_titles: list[str], lesson_preview: str) -> SlideItem:
-    sections_list = " | ".join(section_titles)
-    prompt = _SUMMARY_PROMPT.format(deck_title=deck_title, sections_list=sections_list, lesson_preview=lesson_preview)
-    raw = await asyncio.to_thread(_llm_sync, prompt, 400)
-    data = _extract_json_object(raw)
-    return SlideItem.model_validate(data)
+    try:
+        sections_list = " | ".join(section_titles)
+        prompt = _SUMMARY_PROMPT.format(deck_title=deck_title, sections_list=sections_list, lesson_preview=lesson_preview)
+        raw = await asyncio.to_thread(_llm_sync, prompt, 400)
+        data = _extract_json_object(raw)
+        return SlideItem.model_validate(data)
+    except Exception as exc:
+        logger.warning("Failed to generate summary slide via LLM, using fallback: %s", exc)
+        return SlideItem(
+            title="Tổng kết bài học",
+            bullet_points=["Tóm tắt kiến thức cốt lõi đã học", "Ôn tập các khái niệm quan trọng", "Áp dụng kiến thức vào thực tế", "Giải đáp thắc mắc của người học"],
+            speaker_notes="Như vậy chúng ta đã kết thúc bài học hôm nay. Các bạn hãy dành thời gian ôn tập và thực hành thêm nhé.",
+            talking_points=["Tóm tắt các ý chính", "Dặn dò ôn tập và bài tập về nhà"],
+            estimated_duration=120,
+        )
 
 
 def _split_long_slides(slides: list[SlideItem]) -> list[SlideItem]:

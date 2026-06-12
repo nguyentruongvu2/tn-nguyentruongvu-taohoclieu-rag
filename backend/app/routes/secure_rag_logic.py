@@ -1297,14 +1297,25 @@ async def execute_secure_chat_stream(
     conversation_id = (request.conversation_id or "").strip() or None
     if conversation_id:
         conversation = get_chat_conversation_for_user(conversation_id, current_user["id"], current_user["role"])
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
     else:
         conversation = create_chat_conversation(current_user["id"], request.question[:80], request.document_id)
         conversation_id = str(conversation.get("id", ""))
 
-    effective_document_ids = request.document_ids or ([request.document_id] if request.document_id else [])
+    candidate_ids = request.document_ids or ([request.document_id] if request.document_id else [])
+    effective_document_ids = candidate_ids or ([str(conversation.get("document_id"))] if conversation.get("document_id") else [])
+    if not effective_document_ids:
+        docs = list_documents(current_user["id"], current_user["role"])
+        if not docs:
+            raise HTTPException(status_code=422, detail="No documents")
+        effective_document_ids = [str(docs[0].get("id"))]
+
     source_filters = []
-    for doc_id in (effective_document_ids or [str(conversation.get("document_id"))]):
+    for doc_id in effective_document_ids:
         doc_obj = get_document_for_user(doc_id, current_user["id"], current_user["role"])
+        if not doc_obj:
+            raise HTTPException(status_code=404, detail=f"Doc {doc_id} not found")
         source_filters.append(str(doc_obj.get("source_tag") or ""))
 
     history = list_chat_messages(conversation_id, limit=12)

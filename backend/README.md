@@ -116,7 +116,7 @@ This module is designed as the first stage of a RAG pipeline. The output Markdow
 
 1. **Chunked** by headers using HierarchicalMarkdownHeaderTextSplitter
 2. **Embedded** using vector embedding models (e.g., Google Gemini, OpenAI)
-3. **Stored** in vector databases (ChromaDB, Pinecone, etc.)
+3. **Stored** in vector databases (Qdrant, Pinecone, etc.)
 
 The Markdown structure preservation is optimized for these downstream operations.
 

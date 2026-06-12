@@ -17,6 +17,7 @@ def _ensure_auth_user_columns(conn) -> None:
         ("email_verification_token_hash",  "ALTER TABLE users ADD COLUMN email_verification_token_hash TEXT"),
         ("email_verification_expires_at",  "ALTER TABLE users ADD COLUMN email_verification_expires_at TIMESTAMPTZ"),
         ("email_verified_at",              "ALTER TABLE users ADD COLUMN email_verified_at TIMESTAMPTZ"),
+        ("avatar_url",                     "ALTER TABLE users ADD COLUMN avatar_url TEXT"),
     ]
     for column, statement in migration_statements:
         if not _column_exists(conn, "users", column):
@@ -31,6 +32,7 @@ def _ensure_project_editor_columns(conn) -> None:
         ("format",                  "ALTER TABLE projects ADD COLUMN format TEXT NOT NULL DEFAULT 'markdown'"),
         ("updated_at",              "ALTER TABLE projects ADD COLUMN updated_at TIMESTAMPTZ"),
         ("teaching_tone",           "ALTER TABLE projects ADD COLUMN teaching_tone TEXT NOT NULL DEFAULT ''"),
+        ("syllabus_doc_id",         "ALTER TABLE projects ADD COLUMN syllabus_doc_id TEXT REFERENCES documents(id) ON DELETE SET NULL"),
     ]
     for column, statement in project_migrations:
         if not _column_exists(conn, "projects", column):
@@ -45,6 +47,22 @@ def _ensure_project_editor_columns(conn) -> None:
             conn.execute(statement)
 
     conn.execute("UPDATE projects SET updated_at = COALESCE(updated_at, created_at) WHERE updated_at IS NULL")
+
+
+def _ensure_project_editor_history_table(conn) -> None:
+    if not _table_exists(conn, "project_editor_history"):
+        conn.execute("""
+            CREATE TABLE project_editor_history (
+                id               SERIAL PRIMARY KEY,
+                project_id       TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                section_id       TEXT REFERENCES project_editor_sections(id) ON DELETE CASCADE,
+                prompt           TEXT,
+                content_markdown TEXT,
+                created_at       TIMESTAMPTZ NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_project_editor_history_project ON project_editor_history(project_id, created_at DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_project_editor_history_section ON project_editor_history(section_id, created_at DESC)")
 
 
 def _ensure_quiz_table(conn) -> None:
@@ -99,6 +117,13 @@ def _ensure_chat_multi_document(conn) -> None:
     """)
 
 
+def _ensure_document_progress_columns(conn) -> None:
+    if not _column_exists(conn, "documents", "processing_progress"):
+        conn.execute("ALTER TABLE documents ADD COLUMN processing_progress INTEGER NOT NULL DEFAULT 0")
+    if not _column_exists(conn, "documents", "processing_error"):
+        conn.execute("ALTER TABLE documents ADD COLUMN processing_error TEXT")
+
+
 def _backfill_user_email(conn) -> None:
     rows = conn.execute(
         "SELECT id, username FROM users WHERE email IS NULL OR TRIM(email) = ''"
@@ -139,7 +164,8 @@ def init_auth_db() -> None:
                 email_verification_expires_at   TIMESTAMPTZ,
                 email_verified_at               TIMESTAMPTZ,
                 created_at                      TIMESTAMPTZ NOT NULL,
-                last_login                      TIMESTAMPTZ
+                last_login                      TIMESTAMPTZ,
+                avatar_url                      TEXT
             )
         """)
 
@@ -236,6 +262,7 @@ def init_auth_db() -> None:
                 level           TEXT NOT NULL DEFAULT 'basic',
                 format          TEXT NOT NULL DEFAULT 'markdown',
                 teaching_tone   TEXT NOT NULL DEFAULT '',
+                syllabus_doc_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
                 created_at      TIMESTAMPTZ NOT NULL,
                 updated_at      TIMESTAMPTZ,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -390,9 +417,11 @@ def init_auth_db() -> None:
         # ── Incremental migrations ────────────────────────────────────────────
         _ensure_auth_user_columns(conn)
         _ensure_project_editor_columns(conn)
+        _ensure_project_editor_history_table(conn)
         _ensure_quiz_table(conn)
         _ensure_slide_drafts(conn)
         _ensure_chat_multi_document(conn)
+        _ensure_document_progress_columns(conn)
         _backfill_user_email(conn)
 
         conn.commit()

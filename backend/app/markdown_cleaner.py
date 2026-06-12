@@ -772,6 +772,14 @@ class MarkdownCleaner:
             return False
 
         lowered = text.lower()
+        # Ignore lines that are definitely valid content (form fields/labels/titles)
+        if any(keyword in lowered for keyword in ["họ và tên", "nơi làm việc", "giảng viên", "email", "điện thoại", "thông tin chung", "general information"]):
+            return False
+
+        # Filter Adobe InDesign boilerplate lines (containing .indd, case-insensitive, short length)
+        if ".indd" in lowered and len(text) <= 150:
+            return True
+
         markers = [
             "biên soạn",
             "bien soan",
@@ -787,7 +795,9 @@ class MarkdownCleaner:
 
         # Require strong signal to avoid deleting real content.
         if hit_count >= 2 and len(text) <= 220:
-            return True
+            # Word footers with page variations typically contain a page number
+            if any(p in lowered for p in ["trang", "page"]) or re.search(r'\b\d+\b', text):
+                return True
 
         # Dedicated short page footer line.
         if re.match(r'^(?:trang|page)\s*\d+(?:\s*/\s*\d+)?\s*$', text, re.IGNORECASE):
@@ -1125,17 +1135,21 @@ class MarkdownCleaner:
         
         # If we have dividers, extract only content BETWEEN them
         if len(divider_positions) >= 2:
-            # Remove EVERYTHING before first divider (top header)
-            first_divider = divider_positions[0]
-            for i in range(0, first_divider):
-                logger.debug(f"Removed top header (before first divider): {lines[i][:50]}")
-                lines_to_remove.add(i)
-            
-            # Remove EVERYTHING after last divider (bottom footer)
-            last_divider = divider_positions[-1]
-            for i in range(last_divider + 1, len(lines)):
-                logger.debug(f"Removed bottom footer (after last divider): {lines[i][:50]}")
-                lines_to_remove.add(i)
+            # Only remove header (before first divider) and footer (after last divider) for short documents
+            # (e.g. single-slide presentations or single pages, <= 150 lines).
+            # Long documents should not use this aggressive top/bottom truncation.
+            if len(lines) <= 150:
+                # Remove EVERYTHING before first divider (top header)
+                first_divider = divider_positions[0]
+                for i in range(0, first_divider):
+                    logger.debug(f"Removed top header (before first divider): {lines[i][:50]}")
+                    lines_to_remove.add(i)
+                
+                # Remove EVERYTHING after last divider (bottom footer)
+                last_divider = divider_positions[-1]
+                for i in range(last_divider + 1, len(lines)):
+                    logger.debug(f"Removed bottom footer (after last divider): {lines[i][:50]}")
+                    lines_to_remove.add(i)
             
             # Remove all divider lines themselves
             for idx in divider_positions:

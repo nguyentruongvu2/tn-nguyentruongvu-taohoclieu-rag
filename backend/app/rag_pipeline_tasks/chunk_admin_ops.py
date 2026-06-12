@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Dict, List, Optional, TYPE_CHECKING
 
+from qdrant_client.http import models
+
 if TYPE_CHECKING:
     from ..rag_pipeline import RAGPipeline
+
+logger = logging.getLogger(__name__)
 
 
 def get_chunks_by_source(
@@ -17,24 +22,40 @@ def get_chunks_by_source(
     if not source:
         return []
 
-    collection = pipeline._collection(collection_name)
+    collection_title = pipeline._collection(collection_name)
     safe_limit = max(1, min(200, int(limit)))
-    raw = collection.get(
-        where={"source": source},
-        include=["documents", "metadatas"],
-    )
 
-    ids = raw.get("ids", []) or []
-    docs = raw.get("documents", []) or []
-    metas = raw.get("metadatas", []) or []
+    try:
+        scroll_res = pipeline.qdrant_client.scroll(
+            collection_name=collection_title,
+            scroll_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="source",
+                        match=models.MatchValue(value=source)
+                    )
+                ]
+            ),
+            limit=safe_limit,
+            with_payload=True,
+            with_vectors=False
+        )
+        records, _ = scroll_res
+    except Exception as e:
+        logger.warning("Qdrant scroll failed: %s", e)
+        records = []
 
     chunks: List[Dict[str, object]] = []
-    for chunk_id, text, metadata in zip(ids, docs, metas):
+    for record in records:
+        payload = record.payload or {}
+        chunk_id = payload.get("chunk_id") or str(record.id)
+        text = payload.get("document") or ""
+        metadata = {k: v for k, v in payload.items() if k not in {"document", "chunk_id"}}
         chunks.append(
             {
                 "chunk_id": str(chunk_id),
                 "text": str(text or ""),
-                "metadata": metadata or {},
+                "metadata": metadata,
             }
         )
 
@@ -58,18 +79,65 @@ def delete_chunks_by_source(
     if not source:
         return {"success": True, "deleted_count": 0, "remaining_count": 0}
 
-    collection = pipeline._collection(collection_name)
+    collection_title = pipeline._collection(collection_name)
 
-    before_raw = collection.get(where={"source": source}, include=[])
-    before_ids = before_raw.get("ids", []) or []
-    before_count = len(before_ids)
+    try:
+        scroll_res = pipeline.qdrant_client.scroll(
+            collection_name=collection_title,
+            scroll_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="source",
+                        match=models.MatchValue(value=source)
+                    )
+                ]
+            ),
+            limit=10000,
+            with_payload=False,
+            with_vectors=False
+        )
+        records, _ = scroll_res
+        before_count = len(records)
+    except Exception:
+        before_count = 0
 
     if before_count > 0:
-        collection.delete(where={"source": source})
+        try:
+            pipeline.qdrant_client.delete(
+                collection_name=collection_title,
+                points_selector=models.FilterSelector(
+                    filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="source",
+                                match=models.MatchValue(value=source)
+                            )
+                        ]
+                    )
+                )
+            )
+        except Exception as e:
+            logger.warning("Qdrant delete failed for source %s: %s", source, e)
 
-    after_raw = collection.get(where={"source": source}, include=[])
-    after_ids = after_raw.get("ids", []) or []
-    remaining_count = len(after_ids)
+    try:
+        scroll_res_after = pipeline.qdrant_client.scroll(
+            collection_name=collection_title,
+            scroll_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="source",
+                        match=models.MatchValue(value=source)
+                    )
+                ]
+            ),
+            limit=100,
+            with_payload=False,
+            with_vectors=False
+        )
+        records_after, _ = scroll_res_after
+        remaining_count = len(records_after)
+    except Exception:
+        remaining_count = 0
 
     return {
         "success": remaining_count == 0,

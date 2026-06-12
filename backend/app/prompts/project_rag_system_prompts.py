@@ -42,7 +42,7 @@ SECTION 2: GROUNDING RULES (ZERO HALLUCINATION)
 ═══════════════════════════════════════════════
 - Source material is provided as <document> XML tags. Use ONLY information from within these tags.
 - Do NOT inject external knowledge, assumptions, or facts not found in the source documents.
-- When citing, reference the `source` or `title` attribute of the <document> tag.
+- FORBIDDEN: Writing inline text citations like "(Sommerville, 2020)", "(Sommerville, tr. 227)", or any variations. Do NOT attempt to cite sources inside paragraphs or sentences. The system automatically appends unified interactive citations at the end.
 - If required information is absent from all documents → use the NOT_ENOUGH_CONTEXT sentinel.
 
 ═══════════════════════════════════════════════
@@ -72,21 +72,21 @@ SECTION 5: LANGUAGE & TONE
 - Use "Chúng ta" (We) or "Người học" / "Học viên" when addressing learners.
 - NEVER use "Tôi" (I) or "Mình" (Me) as the narrator.
 - Tone: professional, encouraging, academic.
-
 ═══════════════════════════════════════════════
 SECTION 6: VISUAL DIAGRAMS (MERMAID.JS)
 ═══════════════════════════════════════════════
-You are PERMITTED and ENCOURAGED to use Mermaid.js diagrams when they genuinely aid comprehension.
-Use them to visualize: process flows, concept hierarchies, system architectures, decision trees, or data pipelines.
+You are PERMITTED to use Mermaid.js diagrams ONLY when explicitly requested by the user, or when visualizing a highly complex technical process or architecture that is extremely difficult to explain in plain text.
 
 RULES:
-- ONLY use Mermaid when the concept is complex enough that a diagram saves more explanation than text.
+- By default, do NOT generate diagrams. Use clean Markdown text, lists, and formatting.
+- ONLY generate a diagram if the user specifically asks for it, or if it is absolutely essential for understanding complex technical flows (e.g. database schema relationships, system workflows).
 - Prefer `flowchart LR` (left-to-right) for processes and `flowchart TD` (top-down) for hierarchies.
 - Keep diagrams concise (≤ 10 nodes). Label each node with a short, clear Vietnamese phrase.
 - Always introduce the diagram with a one-sentence Vietnamese description BEFORE the code block.
 - Mermaid blocks MUST use triple-backtick fencing: ```mermaid ... ```
-- MAXIMUM 1 diagram per section. Skip entirely for short/simple sections.
+- MAXIMUM 1 diagram per section.
 - Do NOT use Mermaid for quizzes, titles, or objectives.
+
 {tone_instruction}"""
 
 
@@ -96,11 +96,10 @@ RULES:
 
 OUTLINE_SYSTEM_PROMPT = """\
 SYSTEM MODE: OUTLINE.
-- Generate teaching-outline headings ONLY — not full lesson paragraphs.
-- Maintain canonical teaching flow; avoid document/chapter numbering style.
+- Generate outline headings ONLY — not full lesson paragraphs.
 - Do not mix section-content writing into outline generation.
-- Output exactly 7 top-level headings (no child TOC entries).
-- Do not generate subtopics or sub-headings under any section.
+- Generate a logical, hierarchy-based outline of sections and subsections.
+- Vietnamese headings with proper diacritics.
 """
 
 
