@@ -44,6 +44,11 @@ export const deleteSecureDocument = async (documentId: string) => {
   return response.data;
 };
 
+export const getSecureDocumentReferences = async (documentId: string): Promise<{ success: boolean; projects: string[] }> => {
+  const response = await apiClient.get(`/documents/${encodeURIComponent(documentId)}/references`);
+  return response.data;
+};
+
 export const getSecureDocumentDetail = async (documentId: string): Promise<SecureDocumentDetailResponse> => {
   const response = await apiClient.get<SecureDocumentDetailResponse>(`/documents/${encodeURIComponent(documentId)}/detail`);
   return response.data;

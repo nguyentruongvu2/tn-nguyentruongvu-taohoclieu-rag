@@ -7,6 +7,7 @@ export interface AuthUser {
   username: string;
   email: string;
   role: "user" | "admin";
+  avatar_url?: string | null;
 }
 
 export interface AuthTokenResponse {
@@ -38,6 +39,8 @@ export interface SecureDocument {
   collection_name: string;
   chunks_count: number;
   status: string;
+  processing_progress?: number;
+  processing_error?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -303,6 +306,7 @@ export interface EditorSection {
     };
   }>;
   evaluation?: {
+    is_fallback?: boolean;
     scores: {
       accuracy: number;
       coverage: number;
@@ -326,6 +330,7 @@ export interface EditorProject {
   level: string;
   format: string;
   teaching_tone?: string;
+  syllabus_doc_id?: string | null;
   created_at: string;
   updated_at: string;
   sections_count?: number;
@@ -337,6 +342,7 @@ export interface QuizItem {
   options: string[];
   correct_answer: string;
   explanation: string;
+  explanations?: Record<string, string>;
   restudy_hint?: string;
   type: "knowledge" | "comprehension" | "application" | "analysis";
 }

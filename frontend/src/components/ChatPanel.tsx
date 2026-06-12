@@ -2,6 +2,21 @@ import React from 'react';
 import { Plus, X, ChevronDown, Check, User, Sparkles, BookOpen, Send, StopCircle } from 'lucide-react';
 import MarkdownViewer from './MarkdownViewer';
 
+const formatMessageCitations = (content: string, sources?: any[]) => {
+  if (!sources || sources.length === 0) return content;
+  return content.replace(/\[Source\s*(\d+)\]/gi, (match, p1) => {
+    const idx = parseInt(p1, 10);
+    const src = sources[idx - 1];
+    if (src) {
+      const filename = src.title || src.source || "";
+      const displayName = filename.length > 25 ? filename.slice(0, 22) + "..." : filename;
+      const pageInfo = src.page_number && src.page_number > 0 ? `, Tr. ${src.page_number}` : "";
+      return `[[${idx}] ${displayName}${pageInfo}](ref-${idx})`;
+    }
+    return match;
+  });
+};
+
 export interface ChatPanelProps {
   activeConversationId: string;
   setActiveConversationId: (id: string) => void;
@@ -20,7 +35,7 @@ export interface ChatPanelProps {
   
   message: string;
   setMessage: (msg: string) => void;
-  handleSendMessage: () => void;
+  handleSendMessage: (text?: string) => void;
   streaming: boolean;
 }
 
@@ -148,19 +163,143 @@ export default function ChatPanel({
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto pr-2 pb-4 space-y-6 custom-scrollbar rounded-2xl bg-white shadow-sm border border-gray-100 p-6 flex flex-col">
+      <div className="flex-1 min-h-0 overflow-y-auto pr-2 pb-4 space-y-6 custom-scrollbar rounded-2xl bg-white shadow-sm border border-gray-100 p-6 flex flex-col justify-between">
         {chatHistory.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-gray-400 space-y-6 opacity-70">
-            <div className="w-24 h-24 bg-blue-50 rounded-3xl flex items-center justify-center rotate-12 shadow-sm border border-blue-100/50">
-              <Sparkles size={48} className="text-blue-400 -rotate-12" />
+          <div className="h-full flex flex-col items-center justify-center max-w-2xl mx-auto space-y-8 py-6">
+            <div className="text-center space-y-3">
+              <div className="inline-flex p-3.5 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl text-white shadow-lg shadow-blue-100 animate-pulse mb-2">
+                <Sparkles size={32} />
+              </div>
+              <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-950 tracking-tight bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600">
+                Trợ giảng RAG AI
+              </h2>
+              <p className="text-sm text-gray-500 font-medium max-w-md mx-auto">
+                Hỏi đáp thông minh, phân tích tài liệu bài giảng và hỗ trợ soạn thảo nhanh chóng. Hãy chọn tài liệu và bắt đầu!
+              </p>
             </div>
-            <div className="text-center">
-              <p className="text-xl font-bold text-gray-700 mb-2">
-                Chưa có cuộc hội thoại nào
-              </p>
-              <p className="text-sm font-medium">
-                Bắt đầu nhập câu hỏi bên dưới để RAG Assistant hỗ trợ bạn!
-              </p>
+
+            {/* Quy trình hướng dẫn soạn bài giảng thông minh */}
+            <div className="w-full bg-gradient-to-br from-slate-50 to-blue-50/20 rounded-2xl p-5 border border-gray-150 shadow-sm space-y-4">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-blue-500/10 text-blue-600 rounded-lg">
+                  <BookOpen size={18} className="text-blue-600" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-gray-900">
+                    📚 Quy trình soạn bài giảng thông minh hiệu quả
+                  </h3>
+                  <p className="text-[11px] text-gray-500">
+                    Phối hợp các tính năng của hệ thống RAG để tối ưu công việc giảng dạy
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                {/* Bước 1 */}
+                <div className="bg-white border border-gray-100 rounded-xl p-3.5 space-y-1.5 shadow-sm hover:border-blue-200 transition-all">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-blue-600 text-[10px] px-1.5 py-0.5 bg-blue-50 rounded-full">Bước 1</span>
+                    <span className="text-sm">📂</span>
+                  </div>
+                  <h4 className="font-bold text-gray-900 text-xs">Quản lý Tài liệu</h4>
+                  <p className="text-gray-500 text-[11px] leading-normal font-normal">
+                    Tải lên tài liệu tham khảo (PDF, DOCX, TXT...). Hệ thống sẽ trích xuất nội dung tự động.
+                  </p>
+                </div>
+
+                {/* Bước 2 */}
+                <div className="bg-white border border-gray-100 rounded-xl p-3.5 space-y-1.5 shadow-sm hover:border-blue-200 transition-all">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-blue-600 text-[10px] px-1.5 py-0.5 bg-blue-50 rounded-full">Bước 2</span>
+                    <span className="text-sm">💬</span>
+                  </div>
+                  <h4 className="font-bold text-gray-900 text-xs">AI Trợ giảng</h4>
+                  <p className="text-gray-500 text-[11px] leading-normal font-normal">
+                    Chọn tài liệu vừa tải ở thanh công cụ phía trên và hỏi AI để tóm tắt, giải thích khái niệm.
+                  </p>
+                </div>
+
+                {/* Bước 3 */}
+                <div className="bg-white border border-gray-100 rounded-xl p-3.5 space-y-1.5 shadow-sm hover:border-blue-200 transition-all">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-blue-600 text-[10px] px-1.5 py-0.5 bg-blue-50 rounded-full">Bước 3</span>
+                    <span className="text-sm">📝</span>
+                  </div>
+                  <h4 className="font-bold text-gray-900 text-xs">Tạo bài giảng (RAG)</h4>
+                  <p className="text-gray-500 text-[11px] leading-normal font-normal">
+                    Sử dụng các tài liệu đã tải để AI lập đề cương và sinh nội dung bài giảng hoàn chỉnh tự động.
+                  </p>
+                </div>
+
+                {/* Bước 4 */}
+                <div className="bg-white border border-gray-100 rounded-xl p-3.5 space-y-1.5 shadow-sm hover:border-blue-200 transition-all">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-blue-600 text-[10px] px-1.5 py-0.5 bg-blue-50 rounded-full">Bước 4</span>
+                    <span className="text-sm">🧠</span>
+                  </div>
+                  <h4 className="font-bold text-gray-900 text-xs">Tạo Quiz & Slide</h4>
+                  <p className="text-gray-500 text-[11px] leading-normal font-normal">
+                    Trong trình soạn thảo bài giảng, nhấp chọn <span className="font-semibold text-blue-600">Tạo Quiz</span> để kiểm tra kiến thức hoặc <span className="font-semibold text-blue-600">Tạo Slide</span> PPTX.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-blue-50/50 rounded-xl p-3 border border-blue-100/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                <div className="space-y-0.5">
+                  <span className="font-bold text-blue-800 text-[10px] uppercase tracking-wider block">💡 Câu lệnh hướng dẫn hiệu quả:</span>
+                  <p className="text-gray-600 italic">
+                    "Hướng dẫn tôi các bước sử dụng hệ thống RAG để soạn bài giảng, tạo quiz và slide hiệu quả."
+                  </p>
+                </div>
+                <button
+                  onClick={() => handleSendMessage("Hướng dẫn tôi các bước sử dụng hệ thống RAG để soạn bài giảng, tạo quiz và slide hiệu quả.")}
+                  className="shrink-0 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-xl transition-all shadow-sm shadow-blue-200 text-xs cursor-pointer"
+                >
+                  Thử ngay ⚡
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
+              {[
+                {
+                  title: "📝 Tóm tắt tài liệu",
+                  desc: "Tóm tắt các nội dung và luận điểm cốt lõi trong tài liệu này.",
+                  prompt: "Hãy tóm tắt ngắn gọn các nội dung cốt lõi và các luận điểm chính trong tài liệu này dưới dạng danh sách gạch đầu dòng."
+                },
+                {
+                  title: "❓ Tạo câu hỏi ôn tập",
+                  desc: "Tạo danh sách 5 câu hỏi ôn tập kèm lời giải gợi ý.",
+                  prompt: "Hãy tạo ra 5 câu hỏi ôn tập trắc nghiệm dựa trên nội dung tài liệu này, kèm theo đáp án đúng và lời giải thích chi tiết cho từng câu."
+                },
+                {
+                  title: "🔍 Tìm thuật ngữ khó",
+                  desc: "Định nghĩa và giải thích các từ viết tắt hoặc thuật ngữ chuyên ngành.",
+                  prompt: "Hãy tìm các thuật ngữ chuyên ngành, từ viết tắt hoặc khái niệm kỹ thuật xuất hiện trong tài liệu này và định nghĩa chi tiết ý nghĩa của chúng."
+                },
+                {
+                  title: "💡 Gợi ý bài tập áp dụng",
+                  desc: "Thiết kế các bài tập thực hành nhỏ để học viên áp dụng kiến thức.",
+                  prompt: "Dựa vào nội dung tài liệu học tập này, hãy gợi ý 3 bài tập thực hành thực tế hoặc tình huống thảo luận giúp học viên có thể áp dụng ngay kiến thức đã học."
+                }
+              ].map((p, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleSendMessage(p.prompt)}
+                  className="bg-white border border-gray-150 rounded-2xl p-4 text-left hover:border-blue-400 hover:shadow-md hover:shadow-blue-50/50 transition-all duration-300 group relative overflow-hidden cursor-pointer"
+                >
+                  <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+                  <h4 className="font-bold text-gray-900 text-sm mb-1.5 flex items-center justify-between">
+                    {p.title}
+                    <span className="text-xs text-blue-500 font-medium opacity-0 group-hover:opacity-100 transition-opacity group-hover:translate-x-0.5 transform duration-300">
+                      Gửi →
+                    </span>
+                  </h4>
+                  <p className="text-xs text-gray-500 leading-normal font-normal">
+                    {p.desc}
+                  </p>
+                </button>
+              ))}
             </div>
           </div>
         ) : (
@@ -183,18 +322,60 @@ export default function ChatPanel({
                 <div className="bg-gray-50 border border-gray-100 text-gray-800 max-w-[85%] rounded-2xl rounded-tl-sm p-6 shadow-sm prose prose-sm sm:prose-base prose-blue max-w-none hover:shadow-md transition-shadow">
                   {msg.answer ? (
                     <div className="markdown-content">
-                      <MarkdownViewer content={msg.answer} className="!p-0 !border-0 bg-transparent" />
+                      <MarkdownViewer 
+                        content={formatMessageCitations(msg.answer, msg.metadata?.sources)} 
+                        className="!p-0 !border-0 bg-transparent" 
+                        components={{
+                          a: ({ href, children }: any) => {
+                            if (href?.startsWith("ref-")) {
+                              const idx = parseInt(href.substring(4), 10);
+                              const handleCitationClick = () => {
+                                const el = document.getElementById(`chat-ref-${i}-${idx - 1}`);
+                                if (el) {
+                                  const detailsEl = el.closest('details');
+                                  if (detailsEl) {
+                                    detailsEl.open = true;
+                                  }
+                                  el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                                  el.classList.add("bg-yellow-100", "border-yellow-400", "scale-105");
+                                  setTimeout(() => {
+                                    el.classList.remove("bg-yellow-100", "border-yellow-400", "scale-105");
+                                  }, 2000);
+                                }
+                              };
+                              return (
+                                <span 
+                                  onClick={handleCitationClick}
+                                  className="inline-flex items-center bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded px-1.5 py-0.5 text-[10px] font-semibold mx-0.5 cursor-pointer transition-colors shadow-sm"
+                                  title="Nhấp để xem chi tiết nguồn tham khảo ở dưới"
+                                >
+                                  {children}
+                                </span>
+                              );
+                            }
+                            return (
+                              <a href={href} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
+                                {children}
+                              </a>
+                            );
+                          }
+                        }}
+                      />
                       {msg.metadata?.sources && msg.metadata.sources.length > 0 && (
-                        <div className="mt-6 pt-4 border-t border-gray-200">
-                          <div className="flex items-center gap-2 mb-3">
-                            <BookOpen size={14} className="text-blue-500" />
-                            <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Nguồn tham khảo</span>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
+                        <details className="group/details mt-4 pt-4 border-t border-gray-150" open={false}>
+                          <summary className="flex items-center justify-between cursor-pointer list-none select-none text-[11px] font-bold text-gray-500 uppercase tracking-wider hover:text-blue-600 transition-colors outline-none">
+                            <span className="flex items-center gap-2">
+                              <BookOpen size={14} className="text-blue-500" />
+                              Nguồn tham khảo ({msg.metadata.sources.length})
+                            </span>
+                            <ChevronDown size={14} className="transition-transform duration-200 group-open/details:rotate-180 text-gray-400" />
+                          </summary>
+                          <div className="flex flex-wrap gap-2 mt-3 animate-in fade-in duration-300">
                             {msg.metadata.sources.map((src: any, sIdx: number) => (
                               <div 
+                                id={`chat-ref-${i}-${sIdx}`}
                                 key={sIdx} 
-                                className="group/source relative bg-white border border-gray-200 rounded-lg px-3 py-1.5 flex items-center gap-2 hover:border-blue-300 hover:shadow-sm transition-all cursor-help"
+                                className="group/source relative bg-white border border-gray-200 rounded-lg px-3 py-1.5 flex items-center gap-2 hover:border-blue-300 hover:shadow-sm transition-all cursor-help transition-all duration-300"
                                 title={src.snippet}
                               >
                                 <div className="w-5 h-5 rounded bg-blue-50 flex items-center justify-center text-[10px] font-bold text-blue-600 border border-blue-100">
@@ -211,7 +392,7 @@ export default function ChatPanel({
                               </div>
                             ))}
                           </div>
-                        </div>
+                        </details>
                       )}
                     </div>
                   ) : (
@@ -253,7 +434,7 @@ export default function ChatPanel({
         />
         <div className="flex flex-shrink-0 ml-2 py-2 pr-1">
           <button
-            onClick={handleSendMessage}
+            onClick={() => handleSendMessage()}
             disabled={streaming || !message.trim()}
             className={`p-3 rounded-xl flex items-center justify-center transition-all duration-300 ${
               message.trim() && !streaming

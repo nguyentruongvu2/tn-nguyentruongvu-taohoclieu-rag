@@ -11,6 +11,7 @@
 import React, { useEffect, useRef, useId } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -179,7 +180,50 @@ declare global {
     mermaid?: any;
     _mermaidLoading?: boolean;
     _mermaidReady?: boolean;
+    renderMathInElement?: any;
+    _katexLoading?: boolean;
   }
+}
+
+function loadKaTeX(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (window.renderMathInElement) {
+      resolve();
+      return;
+    }
+    if (!document.getElementById("katex-css")) {
+      const link = document.createElement("link");
+      link.id = "katex-css";
+      link.rel = "stylesheet";
+      link.href = "https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css";
+      document.head.appendChild(link);
+    }
+    if (window._katexLoading) {
+      const interval = setInterval(() => {
+        if (window.renderMathInElement) {
+          clearInterval(interval);
+          resolve();
+        }
+      }, 100);
+      return;
+    }
+    window._katexLoading = true;
+
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js";
+    script.onload = () => {
+      const autoScript = document.createElement("script");
+      autoScript.src = "https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js";
+      autoScript.onload = () => {
+        window.renderMathInElement = (window as any).renderMathInElement;
+        resolve();
+      };
+      autoScript.onerror = () => reject(new Error("Failed to load auto-render script"));
+      document.head.appendChild(autoScript);
+    };
+    script.onerror = () => reject(new Error("Failed to load KaTeX script"));
+    document.head.appendChild(script);
+  });
 }
 
 function loadMermaidCDN(): Promise<void> {
@@ -268,6 +312,28 @@ export function EnhancedMarkdownRenderer({
   components = {},
   className = "",
 }: EnhancedMarkdownRendererProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    loadKaTeX()
+      .then(() => {
+        if (containerRef.current && window.renderMathInElement) {
+          window.renderMathInElement(containerRef.current, {
+            delimiters: [
+              { left: "$$", right: "$$", display: true },
+              { left: "$", right: "$", display: false },
+              { left: "\\(", right: "\\)", display: false },
+              { left: "\\[", right: "\\]", display: true },
+            ],
+            throwOnError: false,
+          });
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to render math with KaTeX:", err);
+      });
+  }, [content]);
+
   const defaultComponents: Components = {
     // ── Blockquote → Callout ──────────────────────────────────────────────
     blockquote: ({ children }) => {
@@ -361,9 +427,18 @@ export function EnhancedMarkdownRenderer({
     ),
 
     // ── List items ───────────────────────────────────────────────────────
-    li: ({ children }) => (
-      <li className="whitespace-pre-wrap break-words">{children}</li>
-    ),
+    li: ({ children }) => {
+      const unwrappedChildren = React.Children.map(children, (child) => {
+        if (React.isValidElement(child)) {
+          // If it's a paragraph or another block element, extract its children
+          if (child.type === "p" || child.type === "div" || child.type === "span") {
+            return child.props.children;
+          }
+        }
+        return child;
+      });
+      return <li className="break-words">{unwrappedChildren}</li>;
+    },
 
     // ── Headings ─────────────────────────────────────────────────────────
     h2: ({ children }) => (
@@ -405,8 +480,8 @@ export function EnhancedMarkdownRenderer({
   };
 
   return (
-    <div className={className}>
-      <ReactMarkdown components={defaultComponents}>{content}</ReactMarkdown>
+    <div ref={containerRef} className={className}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={defaultComponents}>{content}</ReactMarkdown>
     </div>
   );
 }

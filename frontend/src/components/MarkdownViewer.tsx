@@ -17,7 +17,7 @@ export default function MarkdownViewer({ content, className = "", components }: 
             <p className="whitespace-pre-wrap break-words">{children}</p>
           ),
           li: ({ children }) => (
-            <li className="whitespace-pre-wrap break-words">{children}</li>
+            <li className="break-words">{children}</li>
           ),
           ...components
         }}

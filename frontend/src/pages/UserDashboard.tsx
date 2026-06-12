@@ -1,5 +1,6 @@
 import Sidebar from "../components/Sidebar";
 import React, { useState, useEffect, useRef, Suspense, lazy } from "react";
+import MarkdownViewer from "../components/MarkdownViewer";
 
 const TeachingMaterialList = lazy(() => import("./TeachingMaterialList"));
 const ProfileManagement = lazy(() => import("../components/ProfileManagement"));
@@ -29,6 +30,7 @@ import {
   getStoredAuthUser,
   getSecureDocumentDetail,
   fetchSecureDocumentPreviewBlob,
+  getSecureDocumentReferences,
 } from "../services/api";
 import { toastService } from "../services/toastService";
 
@@ -62,10 +64,24 @@ const parseJsonSafely = <T,>(raw: string | null, fallback: T): T => {
 
 export default function UserDashboard() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const currentUser = getStoredAuthUser();
+  const [currentUser, setCurrentUser] = useState(getStoredAuthUser());
+
+  useEffect(() => {
+    const handleAuthUpdate = () => {
+      setCurrentUser(getStoredAuthUser());
+    };
+    window.addEventListener("auth-update", handleAuthUpdate);
+    return () => window.removeEventListener("auth-update", handleAuthUpdate);
+  }, []);
+
   const storagePrefix = `${STORAGE_KEY_DASHBOARD}_${currentUser?.user_id ?? "anon"}`;
 
   const [activeTab, setActiveTab] = useState<DashboardTab>(() => {
+    const isJustLoggedIn = sessionStorage.getItem("just_logged_in") === "true";
+    if (isJustLoggedIn) {
+      sessionStorage.removeItem("just_logged_in");
+      return "chat";
+    }
     const tabFromUrl = normalizeDashboardTab(searchParams.get("tab"));
     const tabFromStorage = normalizeDashboardTab(
       localStorage.getItem(`${storagePrefix}_activeTab`),
@@ -77,7 +93,10 @@ export default function UserDashboard() {
   const [documents, setDocuments] = useState<any[]>([]);
   const [docLoading, setDocLoading] = useState(false);
   const [docError, setDocError] = useState<string | null>(null);
+  const [docsLoadedAtLeastOnce, setDocsLoadedAtLeastOnce] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStage, setUploadStage] = useState<"uploading" | "processing">("uploading");
   const [uploadOcrMode] = useState<"auto" | "on" | "off">("auto");
   const [previewDocumentId, setPreviewDocumentId] = useState<string | null>(
     null,
@@ -184,9 +203,7 @@ export default function UserDashboard() {
     try {
       const docs = await listSecureDocuments();
       setDocuments(docs);
-      if (selectedDocIds.length === 0 && docs.length > 0) {
-        setSelectedDocIds([String(docs[0].id)]);
-      }
+      setDocsLoadedAtLeastOnce(true);
     } catch (e: any) {
       setDocError(
         e?.message ||
@@ -196,6 +213,18 @@ export default function UserDashboard() {
       setDocLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!docsLoadedAtLeastOnce) return;
+    if (documents.length > 0) {
+      const validIds = selectedDocIds.filter(id => documents.some(d => String(d.id) === id));
+      if (validIds.length !== selectedDocIds.length) {
+        setSelectedDocIds(validIds);
+      }
+    } else if (selectedDocIds.length > 0) {
+      setSelectedDocIds([]);
+    }
+  }, [documents, selectedDocIds, docsLoadedAtLeastOnce]);
 
   const toChatPairs = (messages: any[]) => {
     const pairs: any[] = [];
@@ -313,28 +342,90 @@ export default function UserDashboard() {
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files?.length) return;
+    const file = e.target.files[0];
     setUploading(true);
+    setUploadProgress(0);
+    setUploadStage("uploading");
     try {
-      await toastService.promise(
-        secureUploadDocument(e.target.files[0], { ocrMode: uploadOcrMode }),
-        {
-          loading: "Đang tải và xử lý tài liệu...",
-          success: "Tải tài liệu lên thành công.",
-          error: (err) =>
-            err instanceof Error ? err.message : "Tải lên thất bại!",
-        },
+      const res = await secureUploadDocument(
+        file, 
+        { ocrMode: uploadOcrMode },
+        (progressEvent) => {
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / (progressEvent.total || 1));
+          setUploadProgress(Math.min(99, percentCompleted));
+        }
       );
+
+      if (res && res.document_id) {
+        setUploadStage("processing");
+        setUploadProgress(0);
+        
+        let isDone = false;
+        let attempts = 0;
+        const maxAttempts = 600; // 10 minutes timeout
+        
+        while (!isDone && attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          attempts++;
+          
+          const docs = await listSecureDocuments();
+          setDocuments(docs);
+          
+          const currentDoc = docs.find(d => String(d.id) === String(res.document_id));
+          if (currentDoc) {
+            if (currentDoc.status === "ready") {
+              isDone = true;
+              setUploadProgress(100);
+              toastService.success(`Tải tài liệu "${file.name}" lên và xử lý thành công.`);
+            } else if (currentDoc.status === "failed") {
+              isDone = true;
+              throw new Error(currentDoc.processing_error || "Xử lý tài liệu thất bại.");
+            } else {
+              setUploadProgress(currentDoc.processing_progress || 0);
+            }
+          }
+        }
+        
+        if (!isDone) {
+          throw new Error("Quá thời gian xử lý tài liệu.");
+        }
+      } else {
+        toastService.success(`Tải tài liệu "${file.name}" lên và xử lý thành công.`);
+        await loadDocuments();
+      }
+    } catch (err: any) {
+      const msg = err?.message || "Tải lên tài liệu thất bại!";
+      console.error(msg);
+      toastService.error(msg);
       await loadDocuments();
-    } catch {
-      // Error toast is handled by toastService.promise
     } finally {
       setUploading(false);
+      setUploadProgress(0);
+      setUploadStage("uploading");
     }
   };
 
   const handleDeleteDoc = async (id: string) => {
-    if (!window.confirm("Bạn có chắc muốn xóa tài liệu này?")) return;
+    const doc = documents.find(d => String(d.id) === String(id));
+    const filename = doc ? doc.original_filename : "tài liệu này";
     try {
+      let confirmMsg = `Bạn có chắc muốn xóa tài liệu "${filename}"?`;
+      try {
+        const refRes = await getSecureDocumentReferences(id);
+        if (refRes.success && refRes.projects && refRes.projects.length > 0) {
+          confirmMsg = `Tài liệu "${filename}" đang được sử dụng trong các bài giảng sau:\n` +
+            refRes.projects.map((p: string) => `• ${p}`).join("\n") +
+            `\n\nNếu xóa, các bài giảng này sẽ không thể tự động sinh nội dung từ tài liệu này nữa. Bạn vẫn muốn tiếp tục xóa chứ?`;
+        } else {
+          confirmMsg = `Bạn có chắc muốn xóa tài liệu "${filename}" khỏi kho lưu trữ RAG?`;
+        }
+      } catch (e) {
+        console.error("Lấy danh sách dự án tham chiếu thất bại:", e);
+        confirmMsg = `Bạn có chắc muốn xóa tài liệu "${filename}" khỏi kho lưu trữ RAG?`;
+      }
+
+      if (!window.confirm(confirmMsg)) return;
+
       const res = await deleteSecureDocument(id);
       if (previewDocumentId === id) {
         if (previewBlobUrl) {
@@ -420,9 +511,9 @@ export default function UserDashboard() {
     link.remove();
   };
 
-  const handleSendMessage = async () => {
-    if (!message.trim() || streaming) return;
-    const currentMsg = message;
+  const handleSendMessage = async (text?: string) => {
+    const currentMsg = typeof text === "string" ? text : message;
+    if (!currentMsg.trim() || streaming) return;
     setMessage("");
     setStreaming(true);
 
@@ -569,7 +660,7 @@ export default function UserDashboard() {
           <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-400/5 rounded-full blur-[100px] pointer-events-none" />
           <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-purple-400/5 rounded-full blur-[100px] pointer-events-none" />
 
-          <div className={`h-full relative z-10 ${['chat', 'generate', 'preview'].includes(activeTab) ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'}`}>
+          <div className={`h-full relative z-30 ${['chat', 'generate', 'preview'].includes(activeTab) ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'}`}>
             <Suspense fallback={
               <div className="h-full flex items-center justify-center">
                 <div className="w-8 h-8 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
@@ -608,6 +699,8 @@ export default function UserDashboard() {
                   docLoading={docLoading}
                   docError={docError}
                   uploading={uploading}
+                  uploadProgress={uploadProgress}
+                  uploadStage={uploadStage}
                   fileInputRef={fileInputRef}
                   handleFileUpload={handleFileUpload}
                   handleDeleteDoc={handleDeleteDoc}
@@ -678,6 +771,10 @@ export default function UserDashboard() {
                               title="Original document preview"
                               className="w-full h-[70vh] border border-gray-200 rounded-lg"
                             />
+                          ) : previewDetail?.markdown ? (
+                            <div className="w-full h-[70vh] border border-slate-200 rounded-lg overflow-y-auto p-8 bg-white shadow-inner custom-scrollbar">
+                              <MarkdownViewer content={previewDetail.markdown} className="bg-transparent !p-0 !border-0" />
+                            </div>
                           ) : (
                             <div className="h-[70vh] border border-gray-200 rounded-lg flex items-center justify-center text-sm text-gray-500 text-center px-6">
                               Định dạng file này không hỗ trợ xem trực tiếp trên
@@ -710,7 +807,7 @@ export default function UserDashboard() {
 
                           <div className="w-full h-[70vh] border border-gray-200 rounded-lg overflow-y-auto p-4 custom-scrollbar bg-gray-50">
                             <pre className="text-sm whitespace-pre-wrap font-mono text-gray-700">
-                              {previewDetail?.markdown_content ||
+                              {previewDetail?.markdown ||
                                 "Tài liệu này không có nội dung văn bản (hoặc quá trình trích xuất thất bại)."}
                             </pre>
                           </div>

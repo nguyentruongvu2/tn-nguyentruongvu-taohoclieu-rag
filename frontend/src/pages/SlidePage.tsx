@@ -321,6 +321,7 @@ export default function SlidePage({
   const [step, setStep] = useState<
     "idle" | "generating" | "preview" | "downloading"
   >("idle");
+  const [progressVal, setProgressVal] = useState(0);
   const [error, setError] = useState("");
   const [activeIdx, setActiveIdx] = useState(0);
   const [hasDraft, setHasDraft] = useState(false);
@@ -483,19 +484,34 @@ export default function SlidePage({
       if (!ok) return;
     }
     setStep("generating");
+    setProgressVal(0);
     setError("");
     setHasDraft(false);
     setLayouts({});
     setEditTitle(false);
     setEditBullet(null);
+
+    const interval = setInterval(() => {
+      setProgressVal((prev) => {
+        if (prev >= 95) return prev;
+        const increment = prev < 50 ? Math.floor(Math.random() * 6) + 4 : Math.floor(Math.random() * 2) + 1;
+        return Math.min(prev + increment, 95);
+      });
+    }, 450);
+
     try {
       const res = await generateSlideOutline(lessonContent, numSlides);
-      const newSlides = res.slides ?? [];
-      setSlides(newSlides);
-      setActiveIdx(0);
-      setStep("preview");
-      saveDraft(projectId, projectTitle, newSlides, {});
+      clearInterval(interval);
+      setProgressVal(100);
+      setTimeout(() => {
+        const newSlides = res.slides ?? [];
+        setSlides(newSlides);
+        setActiveIdx(0);
+        setStep("preview");
+        saveDraft(projectId, projectTitle, newSlides, {});
+      }, 300);
     } catch (e) {
+      clearInterval(interval);
       setError(
         e instanceof Error
           ? e.message
@@ -885,9 +901,14 @@ export default function SlidePage({
       {isLoading && (
         <div style={S.center}>
           <div style={S.spinner} />
-          <p style={{ color: "#94a3b8", marginTop: 16 }}>
-            Đang phân tích nội dung và tạo {numSlides} slide...
+          <p style={{ color: "#94a3b8", marginTop: 16, fontSize: 15, fontWeight: 500 }}>
+            Đang phân tích nội dung và tạo {numSlides} slide... ({progressVal}%)
           </p>
+          <div style={{ width: 240, height: 6, background: "#334155", borderRadius: 3, marginTop: 12, overflow: "hidden" }}>
+            <div
+              style={{ height: "100%", background: "linear-gradient(90deg, #818cf8, #6366f1)", width: `${progressVal}%`, borderRadius: 3, transition: "width 0.2s ease-out" }}
+            />
+          </div>
         </div>
       )}
 

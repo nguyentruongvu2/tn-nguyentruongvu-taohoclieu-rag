@@ -614,25 +614,37 @@ export default function GenerateMaterialForm({
                                 String(src.clean_content || src.snippet || ""),
                               );
 
+                              const getRelevanceBadgeStyle = (rel: string) => {
+                                const r = rel.toLowerCase();
+                                if (r === "cao") {
+                                  return "bg-emerald-50 text-emerald-700 border border-emerald-150 text-[10px] font-bold px-2 py-0.5 rounded-full";
+                                }
+                                if (r === "trung bình" || r === "trung binh") {
+                                  return "bg-amber-50 text-amber-700 border border-amber-150 text-[10px] font-bold px-2 py-0.5 rounded-full";
+                                }
+                                return "bg-slate-50 text-slate-700 border border-slate-150 text-[10px] font-bold px-2 py-0.5 rounded-full";
+                              };
+
                               return (
                                 <div
                                   key={idx}
-                                  className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm"
+                                  className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow"
                                 >
-                                  <div className="flex items-center justify-between gap-2 mb-2 pb-2 border-b border-gray-100">
-                                    <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs font-bold">
+                                  <div className="flex items-center justify-between gap-2 mb-2.5 pb-2 border-b border-gray-100">
+                                    <span className="bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 rounded text-xs font-bold">
                                       Nguồn #{idx + 1}
                                     </span>
                                     {relevance && (
-                                      <span className="text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold">
-                                        {relevance}
+                                      <span className={getRelevanceBadgeStyle(relevance)}>
+                                        Độ liên quan: {relevance}
                                       </span>
                                     )}
                                   </div>
-                                  <p className="text-xs text-gray-600 font-medium mb-2">
-                                    {citation}
+                                  <p className="text-xs text-gray-700 font-semibold mb-3 flex items-center gap-1.5 bg-gray-50/50 p-2.5 rounded-lg border border-gray-150">
+                                    <FileText size={14} className="text-blue-500 flex-shrink-0" />
+                                    <span className="truncate">{citation}</span>
                                   </p>
-                                  <div className="prose prose-sm markdown-preview max-w-none text-gray-700 leading-relaxed prose-headings:my-1 prose-headings:text-sm prose-headings:font-semibold prose-p:my-1 prose-ul:my-1 prose-ol:my-1">
+                                  <div className="prose prose-sm markdown-preview max-w-none text-gray-700 leading-relaxed prose-headings:my-1 prose-headings:text-sm prose-headings:font-semibold prose-p:my-1 prose-ul:my-1 prose-ol:my-1 p-3.5 bg-slate-50/30 rounded-lg border border-slate-100">
                                     <ReactMarkdown>{snippet}</ReactMarkdown>
                                   </div>
                                 </div>

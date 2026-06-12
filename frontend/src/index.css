@@ -60,34 +60,66 @@ body {
   overflow-x: auto;
 }
 
-/* Shared markdown preview tuning for editor/preview tabs */
-.markdown-preview {
-  overflow-wrap: anywhere;
-  word-break: break-word;
+/* Shared markdown preview tuning for editor/preview tabs and chatbot */
+.markdown-preview p,
+.markdown-content p,
+.markdown-preview ul,
+.markdown-content ul,
+.markdown-preview ol,
+.markdown-content ol,
+.markdown-preview blockquote,
+.markdown-content blockquote,
+.markdown-preview pre,
+.markdown-content pre,
+.markdown-preview table,
+.markdown-content table {
+  margin-top: 0.4rem !important;
+  margin-bottom: 0.4rem !important;
 }
 
-.markdown-preview :where(p, ul, ol, blockquote, pre, table) {
-  margin-top: 0.5rem;
-  margin-bottom: 0.5rem;
+.markdown-preview li,
+.markdown-content li {
+  margin-top: 0.2rem !important;
+  margin-bottom: 0.2rem !important;
 }
 
-.markdown-preview :where(li) {
-  margin-top: 0.2rem;
-  margin-bottom: 0.2rem;
+.markdown-preview li p,
+.markdown-content li p {
+  display: inline !important;
+  margin: 0 !important;
 }
 
-.markdown-preview :where(li > p) {
-  margin-top: 0.15rem;
-  margin-bottom: 0.15rem;
+.markdown-preview li ul,
+.markdown-content li ul,
+.markdown-preview li ol,
+.markdown-content li ol {
+  margin-top: 0.15rem !important;
+  margin-bottom: 0.15rem !important;
 }
 
-.markdown-preview :where(h1, h2, h3, h4, h5, h6) {
-  margin-top: 0.9rem;
-  margin-bottom: 0.45rem;
-  line-height: 1.35;
+.markdown-preview h1,
+.markdown-content h1,
+.markdown-preview h2,
+.markdown-content h2,
+.markdown-preview h3,
+.markdown-content h3,
+.markdown-preview h4,
+.markdown-content h4,
+.markdown-preview h5,
+.markdown-content h5,
+.markdown-preview h6,
+.markdown-content h6 {
+  margin-top: 0.8rem !important;
+  margin-bottom: 0.35rem !important;
+  line-height: 1.35 !important;
 }
 
-.markdown-preview :where(code, td, th) {
+.markdown-preview code,
+.markdown-content code,
+.markdown-preview td,
+.markdown-content td,
+.markdown-preview th,
+.markdown-content th {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -99,58 +131,86 @@ body {
   }
 }
 
-/* Beautiful ChatGPT-style Tables for Markdown */
-.prose table, .markdown-preview table {
+/* Beautiful ChatGPT-style Premium Tables for Markdown & Chat */
+.prose table, .markdown-preview table, .markdown-content table {
   width: 100%;
-  border-collapse: collapse;
+  display: table;
+  border-collapse: separate;
+  border-spacing: 0;
   margin-top: 1.5rem;
   margin-bottom: 1.5rem;
   font-size: 0.875rem;
-  border-radius: 0.5rem;
-  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.03), 0 2px 6px -1px rgba(0, 0, 0, 0.02);
+  overflow: hidden;
 }
 
-.prose thead, .markdown-preview thead {
-  background-color: #f8fafc;
+.prose thead, .markdown-preview thead, .markdown-content thead {
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
 }
 
-.prose th, .markdown-preview th {
-  padding: 0.75rem 1rem;
+.prose th, .markdown-preview th, .markdown-content th {
+  padding: 0.875rem 1.25rem;
   text-align: left;
-  font-weight: 600;
-  color: #334155;
-  border-bottom: 1px solid #e5e7eb;
-  border-right: 1px solid #e5e7eb;
+  font-weight: 700;
+  color: #1e293b;
+  border-bottom: 1.5px solid #cbd5e1;
+  border-right: 1px solid #e2e8f0;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
 }
 
-.prose th:last-child, .markdown-preview th:last-child {
+.prose th:last-child, .markdown-preview th:last-child, .markdown-content th:last-child {
   border-right: none;
 }
 
-.prose tbody tr, .markdown-preview tbody tr {
-  border-bottom: 1px solid #e5e7eb;
-  transition: background-color 0.15s ease;
+.prose tbody tr, .markdown-preview tbody tr, .markdown-content tbody tr {
+  border-bottom: 1px solid #e2e8f0;
+  transition: all 0.2s ease;
 }
 
-.prose tbody tr:last-child, .markdown-preview tbody tr:last-child {
+.prose tbody tr:last-child, .markdown-preview tbody tr:last-child, .markdown-content tbody tr:last-child {
   border-bottom: none;
 }
 
-.prose tbody tr:nth-child(even), .markdown-preview tbody tr:nth-child(even) {
-  background-color: #f8fafc;
+.prose tbody tr:nth-child(even), .markdown-preview tbody tr:nth-child(even), .markdown-content tbody tr:nth-child(even) {
+  background-color: #f8fafc/50;
 }
 
-.prose tbody tr:hover, .markdown-preview tbody tr:hover {
-  background-color: #f1f5f9;
+.prose tbody tr:hover, .markdown-preview tbody tr:hover, .markdown-content tbody tr:hover {
+  background-color: rgba(59, 130, 246, 0.04);
 }
 
-.prose td, .markdown-preview td {
-  padding: 0.75rem 1rem;
-  color: #475569;
-  border-right: 1px solid #e5e7eb;
-  vertical-align: top;
+.prose td, .markdown-preview td, .markdown-content td {
+  padding: 1rem 1.25rem;
+  color: #334155;
+  border-right: 1px solid #e2e8f0;
+  border-bottom: 1px solid #e2e8f0;
+  vertical-align: middle;
+  line-height: 1.5;
 }
 
-.prose td:last-child, .markdown-preview td:last-child {
+.prose tbody tr:last-child td, .markdown-preview tbody tr:last-child td, .markdown-content tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.prose td:last-child, .markdown-preview td:last-child, .markdown-content td:last-child {
   border-right: none;
+}
+
+/* Adjust prose display table override */
+.prose table {
+  display: table !important;
+}
+
+/* Indeterminate sweep loading animation for progress bars */
+@keyframes loading-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+
+.animate-sweep {
+  animation: loading-sweep 1.5s infinite linear;
 }

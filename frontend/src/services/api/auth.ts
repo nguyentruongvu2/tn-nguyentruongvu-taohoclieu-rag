@@ -1,5 +1,5 @@
 import { AxiosError } from "axios";
-import { apiClient, handleError, storeAuth, getStoredAccessToken, clearStoredAuth, clearAllScopedUiStorage } from "./client";
+import { apiClient, handleError, storeAuth, getStoredAccessToken, clearStoredAuth, clearAllScopedUiStorage, getStoredAuthUser } from "./client";
 import { AuthUser, AuthTokenResponse, RegisterResponse } from "../../types/api";
 
 export const registerUser = async (
@@ -38,6 +38,7 @@ export const loginUser = async (
       username: tokenPayload.user.username,
       email: tokenPayload.user.email,
       role: tokenPayload.user.role,
+      avatar_url: tokenPayload.user.avatar_url,
     };
   } catch (error) {
     if (error instanceof AxiosError) throw new Error(handleError(error));
@@ -104,6 +105,28 @@ export const requestPasswordReset = async (email: string): Promise<{ success: bo
 export const confirmPasswordReset = async (token: string, password: string, confirmPassword: string): Promise<{ success: boolean; message: string }> => {
   try {
     const response = await apiClient.post("/auth/reset-password", { token, password, confirm_password: confirmPassword });
+    return response.data;
+  } catch (error) {
+    if (error instanceof AxiosError) throw new Error(handleError(error));
+    throw error;
+  }
+};
+
+export const uploadAvatar = async (file: File): Promise<{ success: boolean; message: string; avatar_url: string }> => {
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await apiClient.post<{ success: boolean; message: string; avatar_url: string }>("/auth/me/avatar", formData, {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    });
+    const user = getStoredAuthUser();
+    const token = getStoredAccessToken();
+    if (user && token) {
+      user.avatar_url = response.data.avatar_url;
+      storeAuth(token, user);
+    }
     return response.data;
   } catch (error) {
     if (error instanceof AxiosError) throw new Error(handleError(error));

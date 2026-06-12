@@ -37,30 +37,30 @@ export const AuthLayout: React.FC<AuthLayoutProps> = ({ children, isLogin }) => 
           </div>
 
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-gray-900 leading-[1.15] tracking-tight mb-6">
-            Tạo bài giảng <br className="hidden sm:block" />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600">AI</span> từ tài liệu của bạn
+            Soạn bài giảng, <br className="hidden sm:block" />
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600">Slide & Quiz</span> tương tác với AI
           </h1>
           
           <p className="text-lg text-gray-600 mb-10 max-w-xl leading-relaxed">
-            Biến tài liệu thành bài giảng chất lượng chỉ trong vài giây với RAG & AI. Nền tảng thông minh hỗ trợ giáo viên và giảng viên tối ưu hóa quy trình chuẩn bị.
+            Biến tài liệu thô thành bài giảng chất lượng, slide trình chiếu có sơ đồ quy trình động, và bộ câu hỏi quiz ôn tập chỉ trong vài giây nhờ sức mạnh RAG & AI.
           </p>
 
           <div className="space-y-6">
             {[
               {
                 icon: BookOpen,
-                title: "Kho tri thức cá nhân",
-                desc: "Lưu trữ và quản lý tài liệu an toàn, dễ dàng truy xuất."
+                title: "Giáo án RAG thông minh",
+                desc: "AI thấu hiểu ngữ cảnh tài liệu chuyên sâu để tạo cấu trúc bài học mạch lạc, chính xác."
               },
               {
                 icon: Sparkles,
-                title: "Tạo nội dung với AI",
-                desc: "AI hiểu ngữ cảnh, hỗ trợ tạo bài giảng, tóm tắt và trích xuất thông tin."
+                title: "Thiết kế Slide & Sơ đồ động",
+                desc: "Tạo slide 16:9 tức thì, tích hợp sơ đồ quy trình tương tác hỗ trợ kéo thả và sửa chữ trực tiếp."
               },
               {
                 icon: ShieldCheck,
-                title: "Bảo mật dữ liệu",
-                desc: "Dữ liệu của bạn được mã hóa và bảo vệ bằng mã hóa tiêu chuẩn."
+                title: "Quiz trắc nghiệm ôn tập",
+                desc: "Sinh câu hỏi củng cố kiến thức bám sát nội dung bài giảng kèm giải thích chi tiết đáp án."
               }
             ].map((feature, idx) => (
               <div key={idx} className="flex items-start gap-4 group">
@@ -75,14 +75,9 @@ export const AuthLayout: React.FC<AuthLayoutProps> = ({ children, isLogin }) => 
             ))}
           </div>
 
-          <div className="hidden lg:flex items-center gap-3 mt-16 text-sm text-gray-500 font-medium">
-            <ShieldCheck className="w-4 h-4 text-green-500" />
-            <span>EduRAG cam kết bảo mật cấp doanh nghiệp theo ISO 27001</span>
-          </div>
         </div>
 
-        {/* Right Side - Auth Forms */}
-        <div className="flex flex-col items-center justify-center lg:justify-end">
+        <div className="flex flex-col items-center justify-center">
           <div className="w-full max-w-[440px]">
             
             {/* Tab Switcher */}
@@ -140,11 +135,7 @@ export const AuthLayout: React.FC<AuthLayoutProps> = ({ children, isLogin }) => 
 
             </div>
           </div>
-          
-          <div className="lg:hidden flex items-center gap-3 mt-8 bg-white/50 backdrop-blur px-5 py-3 rounded-xl shadow-sm border border-gray-100 text-sm text-gray-500 font-medium w-full max-w-[440px]">
-            <ShieldCheck className="w-5 h-5 text-green-500 flex-shrink-0" />
-            <span className="leading-tight text-xs sm:text-sm">Cam kết bảo mật dữ liệu cấp doanh nghiệp <br/><span className="text-gray-400">Tiêu chuẩn ISO 27001</span></span>
-          </div>
+
 
         </div>
       </div>

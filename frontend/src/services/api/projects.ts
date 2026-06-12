@@ -8,6 +8,7 @@ export const createEditorProject = async (payload: {
   level: string;
   format: string;
   teaching_tone?: string;
+  syllabus_doc_id?: string | null;
 }): Promise<EditorProject> => {
   const response = await apiClient.post<EditorProject>("/projects", payload);
   return response.data;
@@ -47,6 +48,7 @@ export const updateEditorProject = async (
     level?: string;
     format?: string;
     teaching_tone?: string;
+    syllabus_doc_id?: string | null;
   },
 ): Promise<EditorProject> => {
   const response = await apiClient.patch<{
@@ -89,6 +91,15 @@ export const patchEditorSection = async (
   return response.data.section;
 };
 
+export const reorderEditorSections = async (
+  projectId: string,
+  sectionIds: string[],
+): Promise<void> => {
+  await apiClient.post(`/projects/${encodeURIComponent(projectId)}/sections/reorder`, {
+    section_ids: sectionIds,
+  });
+};
+
 export const generateEditorProjectOutline = async (
   projectId: string,
   prompt: string,
@@ -112,18 +123,18 @@ export const generateEditorSection = async (payload: {
   content: string;
   retrieved_chunks: any[];
   evaluation?: any;
+  is_structure_update?: boolean;
+  sections?: any[];
 }> => {
   const response = await apiClient.post<{
     success: boolean;
     content: string;
     retrieved_chunks: any[];
     evaluation?: any;
+    is_structure_update?: boolean;
+    sections?: any[];
   }>("/generate-section", payload, { suppressErrorToast: true } as any);
-  return {
-    content: response.data.content || "",
-    retrieved_chunks: response.data.retrieved_chunks || [],
-    evaluation: response.data.evaluation,
-  };
+  return response.data;
 };
 
 export const generateBatchSections = async (payload: {
@@ -159,4 +170,40 @@ export const exportEditorProject = async (
 
 export const exportEditorProjectMarkdown = async (projectId: string): Promise<Blob> => {
   return exportEditorProject(projectId, "md");
+};
+
+export const getSectionHistory = async (
+  projectId: string,
+  sectionId: string,
+): Promise<any[]> => {
+  const response = await apiClient.get<{
+    success: boolean;
+    history: any[];
+  }>(`/projects/${encodeURIComponent(projectId)}/sections/${encodeURIComponent(sectionId)}/history`);
+  return response.data.history || [];
+};
+
+export const restoreSectionHistory = async (
+  projectId: string,
+  sectionId: string,
+  historyId: number,
+): Promise<EditorSection> => {
+  const response = await apiClient.post<{
+    success: boolean;
+    section: EditorSection;
+  }>(
+    `/projects/${encodeURIComponent(projectId)}/sections/${encodeURIComponent(sectionId)}/history/restore`,
+    { history_id: historyId },
+  );
+  return response.data.section;
+};
+
+export const getEditorSection = async (
+  sectionId: string,
+): Promise<EditorSection> => {
+  const response = await apiClient.get<{
+    success: boolean;
+    section: EditorSection;
+  }>(`/sections/${encodeURIComponent(sectionId)}`);
+  return response.data.section;
 };

@@ -6,6 +6,8 @@ export interface DocumentManagerProps {
   docLoading: boolean;
   docError: string | null;
   uploading: boolean;
+  uploadProgress?: number;
+  uploadStage?: 'uploading' | 'processing';
   fileInputRef: RefObject<HTMLInputElement | null>;
   handleFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   handleDeleteDoc: (id: string) => void;
@@ -17,6 +19,8 @@ export default function DocumentManager({
   docLoading,
   docError,
   uploading,
+  uploadProgress = 0,
+  uploadStage = 'uploading',
   fileInputRef,
   handleFileUpload,
   handleDeleteDoc,
@@ -25,41 +29,66 @@ export default function DocumentManager({
   return (
     <div className="h-full overflow-y-auto p-4 xl:p-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="max-w-6xl mx-auto space-y-6">
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 text-center relative overflow-hidden">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 md:p-6 relative overflow-hidden">
           <div className="absolute top-[-50%] left-[-10%] w-[120%] h-[200%] bg-gradient-to-br from-blue-50 via-white to-purple-50 pointer-events-none -z-10" />
-          <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-inner">
-            <FileText size={32} />
-          </div>
-          <h3 className="text-xl font-bold text-gray-800 mb-2">
-            Tải tài liệu mới lên RAG
-          </h3>
-          <p className="text-sm text-gray-500 max-w-md mx-auto mb-8 font-medium">
-            Hỗ trợ các định dạng file PDF, DOCX, TXT, MD.Hỗ trợ OCR
-            với các file chứa ảnh Scan. Hệ thống sẽ tự động phân mảnh
-            (chunking) và nhúng (embedding) để AI có thể đọc hiểu.
-          </p>
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-inner mt-0.5">
+                <FileText size={24} />
+              </div>
+              <div className="text-left space-y-1">
+                <h3 className="text-lg font-bold text-gray-800">
+                  Tải tài liệu mới lên RAG
+                </h3>
+                <p className="text-xs text-gray-500 max-w-xl font-medium leading-relaxed">
+                  Hỗ trợ định dạng PDF, DOCX, TXT, MD (bao gồm ảnh Scan OCR). 
+                  Hệ thống tự động phân mảnh (chunking) và nhúng (embedding) để AI có thể đọc hiểu.
+                </p>
+              </div>
+            </div>
 
-          <input
-            type="file"
-            ref={fileInputRef as RefObject<HTMLInputElement>}
-            onChange={handleFileUpload}
-            className="hidden"
-            accept=".pdf,.doc,.docx,.txt,.md"
-          />
-          <button
-            onClick={() => !uploading && fileInputRef.current?.click()}
-            disabled={uploading}
-            className="px-8 py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors shadow-md shadow-blue-200 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed mx-auto"
-          >
-            {uploading ? (
-              <>
-                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />{" "}
-                Đang xử lý...
-              </>
-            ) : (
-              "Chọn Tệp Tin"
-            )}
-          </button>
+            <div className="flex-shrink-0 flex flex-col items-center md:items-end justify-center min-w-[180px] w-full md:w-auto">
+              <input
+                type="file"
+                ref={fileInputRef as RefObject<HTMLInputElement>}
+                onChange={handleFileUpload}
+                className="hidden"
+                accept=".pdf,.doc,.docx,.txt,.md"
+              />
+              <button
+                onClick={() => !uploading && fileInputRef.current?.click()}
+                disabled={uploading}
+                className="px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors shadow-md shadow-blue-200 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer w-full md:w-auto justify-center"
+              >
+                {uploading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />{" "}
+                    {uploadStage === "uploading"
+                      ? `Đang tải (${uploadProgress}%)`
+                      : `Đang xử lý (${uploadProgress}%)`}
+                  </>
+                ) : (
+                  "Chọn Tệp Tin"
+                )}
+              </button>
+
+              {uploading && (
+                <div className="w-full mt-3 space-y-1.5 animate-in fade-in duration-300">
+                  <div className="h-1.5 w-full bg-blue-50 border border-blue-100 rounded-full overflow-hidden relative">
+                    <div 
+                      className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full transition-all duration-150" 
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                  <p className="text-[10px] text-gray-500 font-bold text-center md:text-right">
+                    {uploadStage === "uploading" 
+                      ? `Đang tải tệp lên (${uploadProgress}%)` 
+                      : `Đang phân tích, trích xuất & nhúng (${uploadProgress}%)`}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -124,13 +153,25 @@ export default function DocumentManager({
                         {doc.original_filename}
                       </h4>
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2 text-xs font-medium text-gray-500">
-                        <span className="flex items-center gap-1.5">
-                          <CheckCircle
-                            size={14}
-                            className="text-green-500"
-                          />{" "}
-                          Sẵn sàng cho RAG
-                        </span>
+                        {doc.status === "processing" ? (
+                          <span className="flex items-center gap-1.5 text-blue-600 font-bold">
+                            <div className="w-3.5 h-3.5 border-2 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
+                            Đang xử lý ({doc.processing_progress ?? 0}%)
+                          </span>
+                        ) : doc.status === "failed" ? (
+                          <span className="flex items-center gap-1.5 text-red-600 font-bold" title={doc.processing_error || "Lỗi xử lý"}>
+                            <AlertTriangle size={14} className="text-red-500" />
+                            Xử lý thất bại
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1.5">
+                            <CheckCircle
+                              size={14}
+                              className="text-green-500"
+                            />{" "}
+                            Sẵn sàng cho RAG
+                          </span>
+                        )}
                         <span className="flex items-center gap-1.5 px-2 py-0.5 bg-gray-100 rounded-md">
                           ID:{" "}
                           <span

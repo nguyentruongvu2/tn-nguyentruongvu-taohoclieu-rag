@@ -1,4 +1,5 @@
 import { Sparkles, X, Search, FileText, Eye, User, LogOut } from 'lucide-react';
+import { getAvatarUrl } from '../utils/user_avatar';
 
 export interface SidebarProps {
   isSidebarOpen: boolean;
@@ -62,7 +63,7 @@ export default function Sidebar({
               setActiveTab("chat");
               if (window.innerWidth < 1280) setIsSidebarOpen(false);
             }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${activeTab === "chat" ? "bg-blue-50 text-blue-700 font-semibold shadow-sm border border-blue-100/50" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 font-medium"}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 border ${activeTab === "chat" ? "bg-blue-50/70 text-blue-700 font-semibold shadow-sm border-l-4 border-l-blue-600 border-y border-r border-blue-100/40" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 font-medium border-transparent"}`}
           >
             <Search
               size={20}
@@ -77,7 +78,7 @@ export default function Sidebar({
               setActiveTab("documents");
               if (window.innerWidth < 1280) setIsSidebarOpen(false);
             }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${activeTab === "documents" ? "bg-blue-50 text-blue-700 font-semibold shadow-sm border border-blue-100/50" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 font-medium"}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 border ${activeTab === "documents" ? "bg-blue-50/70 text-blue-700 font-semibold shadow-sm border-l-4 border-l-blue-600 border-y border-r border-blue-100/40" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 font-medium border-transparent"}`}
           >
             <FileText
               size={20}
@@ -92,7 +93,7 @@ export default function Sidebar({
               setActiveTab("generate");
               if (window.innerWidth < 1280) setIsSidebarOpen(false);
             }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${activeTab === "generate" ? "bg-blue-50 text-blue-700 font-semibold shadow-sm border border-blue-100/50" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 font-medium"}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 border ${activeTab === "generate" ? "bg-blue-50/70 text-blue-700 font-semibold shadow-sm border-l-4 border-l-blue-600 border-y border-r border-blue-100/40" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 font-medium border-transparent"}`}
           >
             <Sparkles
               size={20}
@@ -107,7 +108,7 @@ export default function Sidebar({
               setActiveTab("preview");
               if (window.innerWidth < 1280) setIsSidebarOpen(false);
             }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${activeTab === "preview" ? "bg-blue-50 text-blue-700 font-semibold shadow-sm border border-blue-100/50" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 font-medium"}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 border ${activeTab === "preview" ? "bg-blue-50/70 text-blue-700 font-semibold shadow-sm border-l-4 border-l-blue-600 border-y border-r border-blue-100/40" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 font-medium border-transparent"}`}
           >
             <Eye
               size={20}
@@ -123,7 +124,7 @@ export default function Sidebar({
               setActiveTab("profile");
               if (window.innerWidth < 1280) setIsSidebarOpen(false);
             }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${activeTab === "profile" ? "bg-blue-50 text-blue-700 font-semibold shadow-sm border border-blue-100/50" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 font-medium"}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 border ${activeTab === "profile" ? "bg-blue-50/70 text-blue-700 font-semibold shadow-sm border-l-4 border-l-blue-600 border-y border-r border-blue-100/40" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 font-medium border-transparent"}`}
           >
             <User
               size={20}
@@ -138,9 +139,11 @@ export default function Sidebar({
         <div className="p-4 border-t border-gray-100 bg-gray-50/50">
           <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100 flex flex-col items-center relative overflow-hidden group">
             <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-purple-500/5 pointer-events-none" />
-            <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-lg mb-3 shadow-inner ring-4 ring-white z-10">
-              {currentUser?.username?.charAt(0).toUpperCase() || "U"}
-            </div>
+            <img
+              src={getAvatarUrl(currentUser)}
+              alt="Avatar"
+              className="w-12 h-12 rounded-full mb-3 shadow-inner ring-4 ring-white z-10 object-cover"
+            />
             <p className="text-sm font-bold text-gray-900 truncate w-full text-center z-10">
               {currentUser?.username || "User"}
             </p>

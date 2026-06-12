@@ -98,6 +98,10 @@ export const storeAuth = (token: string, user: AuthUser, persist: boolean = true
   const storage = persist ? window.localStorage : window.sessionStorage;
   storage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
   storage.setItem(AUTH_USER_STORAGE_KEY, JSON.stringify(user));
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event("auth-update"));
+  }
 };
 
 export const handleError = (error: AxiosError): string => {

@@ -3,7 +3,6 @@ import {
   generateQuiz,
   getQuizStats,
   saveQuizAttempt,
-  analyzeQuizContent,
   type QuizItem,
   type QuizStats,
 } from "../services/api";
@@ -78,7 +77,10 @@ function exportToGift(items: import("../services/api").QuizItem[]): string {
       const text = opt.replace(/^[A-D][.)\s]+/i, "").trim();
       const isCorrect = letter === item.correct_answer.toUpperCase();
       // GIFT: = correct, ~ wrong
-      lines.push(`  ${isCorrect ? "=" : "~"} ${esc(text)}`);
+      const feedback = item.explanations?.[letter]
+        ? ` # ${esc(item.explanations[letter])}`
+        : "";
+      lines.push(`  ${isCorrect ? "=" : "~"}${esc(text)}${feedback}`);
     });
     lines.push(`}`);
     lines.push("");
@@ -172,11 +174,17 @@ function exportToPrintableTxt(items: import("../services/api").QuizItem[]): stri
   for (let i = 0; i < answerKeyRow.length; i += 5) {
     lines.push(answerKeyRow.slice(i, i + 5).join("   |   "));
   }
-  lines.push("");
   lines.push("CHI TIẾT GIẢI THÍCH:");
   items.forEach((item, idx) => {
     lines.push(`Câu ${idx + 1}: Đáp án đúng: ${item.correct_answer}`);
-    lines.push(`- Giải thích: ${item.explanation}`);
+    if (item.explanations) {
+      lines.push(`- Giải thích chi tiết các lựa chọn:`);
+      Object.entries(item.explanations).forEach(([choice, exp]) => {
+        lines.push(`  + Lựa chọn ${choice}: ${exp}`);
+      });
+    } else {
+      lines.push(`- Giải thích: ${item.explanation}`);
+    }
     if (item.restudy_hint) {
       lines.push(`- Gợi ý ôn tập: ${item.restudy_hint}`);
     }
@@ -198,6 +206,15 @@ function getNextIdNumber(existingItems: import("../services/api").QuizItem[]): n
   return max + 1;
 }
 
+function getQuestionsCountFromPrompt(prompt: string): number {
+  const matched = (prompt || "").match(/(\d+)\s*(?:câu|cau|question)/i);
+  if (matched) {
+    const num = parseInt(matched[1], 10);
+    if (num >= 1 && num <= 20) return num;
+  }
+  return 5; // default fallback
+}
+
 // ── QuizPage ───────────────────────────────────────────────────────────────────
 
 export default function QuizPage() {
@@ -206,6 +223,7 @@ export default function QuizPage() {
   const [submitted, setSubmitted] = useState(false);
   const [score, setScore] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [progressVal, setProgressVal] = useState(0);
   const [error, setError] = useState("");
   const [projectId, setProjectId] = useState("");
   const [lessonContent, setLessonContent] = useState("");
@@ -220,11 +238,7 @@ export default function QuizPage() {
 
   // Modal settings
   const [showRegenModal, setShowRegenModal] = useState(false);
-  const [regenBloom, setRegenBloom] = useState("mix");
   const [regenCustom, setRegenCustom] = useState("");
-  const [analyzing, setAnalyzing] = useState(false);
-  const [aiSuggestedNum, setAiSuggestedNum] = useState<number | null>(null);
-  const [aiAnalysisText, setAiAnalysisText] = useState("");
   const initCalledRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -265,17 +279,6 @@ export default function QuizPage() {
       // Otherwise, instead of auto-generating, just enter setup mode
       setLoading(false);
       setShowRegenModal(true);
-      setAnalyzing(true);
-      analyzeQuizContent(state.lessonContent)
-        .then((res) => {
-          setAiSuggestedNum(res.suggested_count);
-          setNumQuestions(res.suggested_count);
-          setAiAnalysisText(`Độ khó: ${res.complexity}. ${res.reasoning}`);
-        })
-        .catch(() => {
-          setAiAnalysisText("Lỗi phân tích nội dung.");
-        })
-        .finally(() => setAnalyzing(false));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Lỗi tải dữ liệu quiz.");
       setLoading(false);
@@ -290,6 +293,15 @@ export default function QuizPage() {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [loading, submitted, items.length]);
+
+  // Sanitize and clamp numQuestions when opening configuration modal to prevent 422 errors
+  useEffect(() => {
+    if (showRegenModal) {
+      if (numQuestions > 20 || numQuestions < 1) {
+        setNumQuestions(5);
+      }
+    }
+  }, [showRegenModal, numQuestions]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -431,62 +443,77 @@ export default function QuizPage() {
     const nextIdStart = getNextIdNumber(items);
     
     setLoading(true);
+    setProgressVal(0);
     setError("");
     setShowRegenModal(false);
+
+    const interval = setInterval(() => {
+      setProgressVal((prev) => {
+        if (prev >= 95) return prev;
+        const increment = prev < 50 ? Math.floor(Math.random() * 6) + 4 : Math.floor(Math.random() * 2) + 1;
+        return Math.min(prev + increment, 95);
+      });
+    }, 450);
     
     generateQuiz(lessonContent, n, newSeed, bloom, custom)
       .then((res) => {
-        const generatedQuestions = res.questions ?? [];
+        clearInterval(interval);
+        setProgressVal(100);
         
-        let newItems: QuizItem[];
-        let newAnswers: UserAnswers;
-        if (mode === "append") {
-          const mappedQuestions = generatedQuestions.map((q, idx) => ({
-            ...q,
-            id: `q${nextIdStart + idx}`
-          }));
-          newItems = [...items, ...mappedQuestions];
-          newAnswers = { ...answers };
-          setSubmitted(false);
-          setScore(0);
-          setSavedId(null);
-          setFilterErrors(false);
-        } else {
-          newItems = generatedQuestions;
-          newAnswers = {};
-          setAnswers({});
-          setSubmitted(false);
-          setScore(0);
-          setSavedId(null);
-          setElapsed(0);
-          setFilterErrors(false);
-        }
-        
-        setItems(newItems);
-        setNumQuestions(n);
-        setVariationSeed(res.variation_seed ?? newSeed);
-        setLoading(false);
+        setTimeout(() => {
+          const generatedQuestions = res.questions ?? [];
+          
+          let newItems: QuizItem[];
+          let newAnswers: UserAnswers;
+          if (mode === "append") {
+            const mappedQuestions = generatedQuestions.map((q, idx) => ({
+              ...q,
+              id: `q${nextIdStart + idx}`
+            }));
+            newItems = [...items, ...mappedQuestions];
+            newAnswers = { ...answers };
+            setSubmitted(false);
+            setScore(0);
+            setSavedId(null);
+            setFilterErrors(false);
+          } else {
+            newItems = generatedQuestions;
+            newAnswers = {};
+            setAnswers({});
+            setSubmitted(false);
+            setScore(0);
+            setSavedId(null);
+            setElapsed(0);
+            setFilterErrors(false);
+          }
+          
+          setItems(newItems);
+          setNumQuestions(n);
+          setVariationSeed(res.variation_seed ?? newSeed);
+          setLoading(false);
 
-        // Update localStorage with the new questions
-        const raw = localStorage.getItem(QUIZ_STORAGE_KEY);
-        if (raw) {
-          const state = JSON.parse(raw);
-          localStorage.setItem(
-            QUIZ_STORAGE_KEY,
-            JSON.stringify({
-              ...state,
-              numQuestions: n,
-              items: newItems,
-              variationSeed: res.variation_seed ?? newSeed,
-              answers: newAnswers,
-              submitted: false,
-              score: 0,
-              elapsed: mode === "append" ? elapsed : 0,
-            }),
-          );
-        }
+          // Update localStorage with the new questions
+          const raw = localStorage.getItem(QUIZ_STORAGE_KEY);
+          if (raw) {
+            const state = JSON.parse(raw);
+            localStorage.setItem(
+              QUIZ_STORAGE_KEY,
+              JSON.stringify({
+                ...state,
+                numQuestions: n,
+                items: newItems,
+                variationSeed: res.variation_seed ?? newSeed,
+                answers: newAnswers,
+                submitted: false,
+                score: 0,
+                elapsed: mode === "append" ? elapsed : 0,
+              }),
+            );
+          }
+        }, 300);
       })
       .catch((err) => {
+        clearInterval(interval);
         setError(err instanceof Error ? err.message : "Lỗi tạo quiz.");
         setLoading(false);
       });
@@ -509,14 +536,19 @@ export default function QuizPage() {
 
   if (loading) {
     return (
-      <div className="qp-page">
-        <div className="qp-center">
-          <div className="qp-spinner" />
-          <p style={{ color: "#818cf8", fontSize: 15, margin: 0, fontWeight: 500 }}>
-            Đang tạo câu hỏi quiz...
+      <div className="qp-page" style={{ background: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
+        <div className="qp-center" style={{ width: "100%", maxWidth: "360px", padding: 24, textAlign: "center", background: "#1e293b", borderRadius: 16, border: "1px solid #334155" }}>
+          <div className="qp-spinner" style={{ margin: "0 auto 16px", borderColor: "#334155", borderTopColor: "#818cf8" }} />
+          <p style={{ color: "#fff", fontSize: 16, margin: "0 0 8px 0", fontWeight: 700 }}>
+            Đang tạo câu hỏi quiz... ({progressVal}%)
           </p>
-          <p style={{ color: "#475569", fontSize: 12, margin: 0 }}>
-            Gemini đang phân tích nội dung bài giảng
+          <div style={{ height: 6, width: "100%", background: "#334155", borderRadius: 3, overflow: "hidden", marginBottom: 12 }}>
+            <div 
+              style={{ height: "100%", background: "linear-gradient(90deg, #818cf8, #6366f1)", width: `${progressVal}%`, borderRadius: 3, transition: "width 0.2s ease-out" }}
+            />
+          </div>
+          <p style={{ color: "#94a3b8", fontSize: 12, margin: 0 }}>
+            Gemini đang phân tích nội dung bài giảng và thiết kế câu hỏi trắc nghiệm
           </p>
         </div>
       </div>
@@ -739,61 +771,29 @@ export default function QuizPage() {
       {/* Regen Modal */}
       {showRegenModal && (
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", width: "100%", maxWidth: "400px", boxShadow: "0 20px 40px rgba(0,0,0,0.2)" }}>
+          <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", width: "100%", maxWidth: "420px", boxShadow: "0 20px 40px rgba(0,0,0,0.2)" }}>
             <h2 style={{ margin: "0 0 16px 0", fontSize: 20 }}>{items.length === 0 ? "Cấu hình Quiz" : "Tạo Quiz mới"}</h2>
             
-            {analyzing ? (
-              <div style={{ marginBottom: 16, padding: "12px", background: "#f8fafc", borderRadius: "8px", display: "flex", gap: "8px", alignItems: "center" }}>
-                <div className="qp-spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
-                <span style={{ fontSize: 13, color: "#64748b" }}>AI đang phân tích bài giảng...</span>
-              </div>
-            ) : aiAnalysisText ? (
-              <div style={{ marginBottom: 16, padding: "12px", background: "#f0fdf4", borderRadius: "8px", border: "1px solid #bbf7d0" }}>
-                <span style={{ fontSize: 13, color: "#166534", lineHeight: 1.5 }}>
-                  <strong style={{ color: "#15803d" }}>🤖 Phân tích:</strong> {aiAnalysisText}
-                </span>
-              </div>
-            ) : null}
-
             <div style={{ marginBottom: 16 }}>
-              <label style={{ display: "block", marginBottom: 8, fontSize: 14, fontWeight: 600 }}>Số lượng câu hỏi (tối đa 20)</label>
-              <select 
-                value={numQuestions} 
-                onChange={e => setNumQuestions(Number(e.target.value))}
-                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1" }}
-                disabled={analyzing}
-              >
-                {Array.from(new Set([3, 5, 7, 10, 15, 20, aiSuggestedNum].filter((n): n is number => n !== null))).sort((a, b) => a - b).map(n => (
-                  <option key={n} value={n}>
-                    {n} câu {n === aiSuggestedNum ? " (🤖 AI đề xuất)" : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-            
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: "block", marginBottom: 8, fontSize: 14, fontWeight: 600 }}>Mức độ Bloom</label>
-              <select 
-                value={regenBloom} 
-                onChange={e => setRegenBloom(e.target.value)}
-                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1" }}
-              >
-                <option value="mix">Trộn lẫn (Khuyên dùng)</option>
-                <option value="knowledge">Chỉ Nhận biết</option>
-                <option value="comprehension">Chỉ Hiểu</option>
-                <option value="application">Chỉ Áp dụng</option>
-                <option value="analysis">Chỉ Phân tích</option>
-              </select>
-            </div>
-            
-            <div style={{ marginBottom: 24 }}>
-              <label style={{ display: "block", marginBottom: 8, fontSize: 14, fontWeight: 600 }}>Yêu cầu thêm (tuỳ chọn)</label>
+              <label style={{ display: "block", marginBottom: 8, fontSize: 14, fontWeight: 600 }}>Nhập yêu cầu tạo câu hỏi (Prompt)</label>
               <textarea 
                 value={regenCustom} 
                 onChange={e => setRegenCustom(e.target.value)}
-                placeholder="VD: Tập trung vào chương 2, độ khó cao..."
-                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", minHeight: "80px", resize: "none" }}
+                placeholder="VD: Tạo 5 câu hỏi trắc nghiệm nâng cao mức độ Áp dụng cho Chương 2, sử dụng các tình huống thực tế..."
+                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", minHeight: "100px", resize: "none", fontSize: 13 }}
               />
+            </div>
+
+            <div style={{ fontSize: "12px", color: "#475569", background: "#f8fafc", padding: "12px", borderRadius: "8px", marginBottom: 20, border: "1px solid #e2e8f0", lineHeight: "1.6" }}>
+              <strong style={{ color: "#0f172a", display: "block", marginBottom: 4 }}>💡 Cách prompt đạt hiệu quả cao nhất:</strong>
+              <ul style={{ margin: 0, paddingLeft: "16px", display: "flex", flexDirection: "column", gap: "2px", marginBottom: "8px" }}>
+                <li>Nêu rõ số lượng cụ thể (VD: <em>"tạo 3 câu..."</em>, <em>"5 câu..."</em>).</li>
+                <li>Nêu rõ Chương/Mục kiểm tra (VD: <em>"về Chương 1"</em>, <em>"Mục 2.1"</em>).</li>
+                <li>Nêu rõ mức độ Bloom mong muốn (<em>Nhận biết</em>, <em>Thông hiểu</em>, <em>Áp dụng</em>, <em>Phân tích</em>).</li>
+              </ul>
+              <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "6px", fontSize: "11px", color: "#64748b" }}>
+                <strong>Ví dụ đầy đủ:</strong> <em>"Tạo 5 câu hỏi nâng cao mức độ Nhận biết và Thông hiểu về các  khái niệm cốt lõi trong Mục 1.1 Công nghệ phần mềm."</em>
+              </div>
             </div>
             
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -806,9 +806,12 @@ export default function QuizPage() {
                     Quay lại
                   </button>
                   <button 
-                    onClick={() => handleRegenerate(numQuestions, regenBloom, regenCustom, "replace")}
+                    onClick={() => {
+                      const n = getQuestionsCountFromPrompt(regenCustom);
+                      handleRegenerate(n, "mix", regenCustom, "replace");
+                    }}
                     style={{ padding: "8px 16px", borderRadius: "6px", border: "none", background: "#4f46e5", cursor: "pointer", fontWeight: 600, color: "#fff" }}
-                    disabled={analyzing}
+                    disabled={!regenCustom.trim()}
                   >
                     ✨ Bắt đầu tạo Quiz
                   </button>
@@ -823,19 +826,25 @@ export default function QuizPage() {
                       Huỷ
                     </button>
                     <button 
-                      onClick={() => handleRegenerate(numQuestions, regenBloom, regenCustom, "replace")}
+                      onClick={() => {
+                        const n = getQuestionsCountFromPrompt(regenCustom);
+                        handleRegenerate(n, "mix", regenCustom, "replace");
+                      }}
                       style={{ padding: "8px 16px", borderRadius: "6px", border: "none", background: "#ef4444", cursor: "pointer", fontWeight: 600, color: "#fff" }}
                       title="Xoá tất cả câu hỏi hiện tại và tạo bộ mới"
-                      disabled={analyzing}
+                      disabled={!regenCustom.trim()}
                     >
                       Tạo mới (Thay thế)
                     </button>
                   </div>
                   <button 
-                    onClick={() => handleRegenerate(numQuestions, regenBloom, regenCustom, "append")}
+                    onClick={() => {
+                      const n = getQuestionsCountFromPrompt(regenCustom);
+                      handleRegenerate(n, "mix", regenCustom, "append");
+                    }}
                     style={{ padding: "8px 16px", borderRadius: "6px", border: "none", background: "#10b981", cursor: "pointer", fontWeight: 600, color: "#fff", width: "100%" }}
                     title="Giữ nguyên các câu hỏi hiện tại, chỉ tạo thêm câu hỏi mới gộp vào"
-                    disabled={analyzing}
+                    disabled={!regenCustom.trim()}
                   >
                     ➕ Tạo thêm & Gộp vào ({items.length} câu hiện có)
                   </button>

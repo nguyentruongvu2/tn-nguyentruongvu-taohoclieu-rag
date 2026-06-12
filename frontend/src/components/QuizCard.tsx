@@ -66,6 +66,15 @@ export function QuizCard({
   );
   const [editCorrectAnswer, setEditCorrectAnswer] = useState(item.correct_answer);
   const [editExplanation, setEditExplanation] = useState(item.explanation);
+  const [editExplanations, setEditExplanations] = useState<Record<string, string>>(() => {
+    const exps = item.explanations || {};
+    return {
+      A: exps.A || "",
+      B: exps.B || "",
+      C: exps.C || "",
+      D: exps.D || "",
+    };
+  });
   const [editType, setEditType] = useState(item.type);
   const [editRestudyHint, setEditRestudyHint] = useState(item.restudy_hint || "");
 
@@ -81,6 +90,13 @@ export function QuizCard({
     );
     setEditCorrectAnswer(item.correct_answer);
     setEditExplanation(item.explanation);
+    const exps = item.explanations || {};
+    setEditExplanations({
+      A: exps.A || "",
+      B: exps.B || "",
+      C: exps.C || "",
+      D: exps.D || "",
+    });
     setEditType(item.type);
     setEditRestudyHint(item.restudy_hint || "");
   }, [item]);
@@ -107,6 +123,12 @@ export function QuizCard({
         ],
         correct_answer: editCorrectAnswer,
         explanation: editExplanation.trim(),
+        explanations: {
+          A: editExplanations.A.trim() || editExplanation.trim(),
+          B: editExplanations.B.trim() || editExplanation.trim(),
+          C: editExplanations.C.trim() || editExplanation.trim(),
+          D: editExplanations.D.trim() || editExplanation.trim(),
+        },
         type: editType as any,
         restudy_hint: editRestudyHint.trim(),
       });
@@ -126,6 +148,13 @@ export function QuizCard({
     );
     setEditCorrectAnswer(item.correct_answer);
     setEditExplanation(item.explanation);
+    const exps = item.explanations || {};
+    setEditExplanations({
+      A: exps.A || "",
+      B: exps.B || "",
+      C: exps.C || "",
+      D: exps.D || "",
+    });
     setEditType(item.type);
     setEditRestudyHint(item.restudy_hint || "");
     setIsEditing(false);
@@ -240,7 +269,7 @@ export function QuizCard({
 
         <div style={{ marginBottom: 12 }}>
           <label style={{ display: "block", marginBottom: 4, fontSize: 13, fontWeight: 600, color: "#475569" }}>
-            Giải thích đáp án:
+            Giải thích đáp án chung (Fallback):
           </label>
           <textarea
             value={editExplanation}
@@ -257,6 +286,51 @@ export function QuizCard({
               boxSizing: "border-box",
             }}
           />
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "#475569" }}>
+            Giải thích chi tiết cho từng lựa chọn:
+          </label>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {["A", "B", "C", "D"].map((letter) => (
+              <div key={letter} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{
+                  width: 24,
+                  height: 24,
+                  borderRadius: 6,
+                  background: editCorrectAnswer === letter ? GREEN : "rgba(0,0,0,0.06)",
+                  color: editCorrectAnswer === letter ? "#fff" : "#64748b",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 700,
+                  fontSize: 12,
+                }}>
+                  {letter}
+                </span>
+                <input
+                  type="text"
+                  value={editExplanations[letter] || ""}
+                  onChange={(e) => {
+                    setEditExplanations({
+                      ...editExplanations,
+                      [letter]: e.target.value,
+                    });
+                  }}
+                  placeholder={`Giải thích cho lựa chọn ${letter}...`}
+                  style={{
+                    flex: 1,
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    border: "1px solid #cbd5e1",
+                    fontSize: 13,
+                    boxSizing: "border-box",
+                  }}
+                />
+              </div>
+            ))}
+          </div>
         </div>
 
         <div style={{ marginBottom: 20 }}>
@@ -509,7 +583,14 @@ export function QuizCard({
           </div>
 
           <div style={{ color: "#475569" }}>
-            {item.explanation}
+            {userAnswer && item.explanations && item.explanations[userAnswer] ? (
+              <span>
+                <strong style={{ color: isCorrect ? GREEN : "#ea580c" }}>[Lựa chọn {userAnswer}]:</strong>{" "}
+                {item.explanations[userAnswer]}
+              </span>
+            ) : (
+              item.explanation
+            )}
           </div>
 
           {!isCorrect && userAnswer && item.restudy_hint && (

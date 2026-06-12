@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
-import MarkdownViewer from "../components/MarkdownViewer";
-import { ChevronDown, Download, Eye, RefreshCw, Save } from "lucide-react";
+import { EnhancedMarkdownRenderer } from "../components/EnhancedMarkdownRenderer";
+import { ChevronDown, Download, Eye, RefreshCw } from "lucide-react";
 import {
   exportEditorProject,
   getEditorProjectDetail,
-  patchEditorSection,
   type EditorProjectExportFormat,
   type EditorSection,
 } from "../services/api";
@@ -74,6 +73,19 @@ function removeDuplicateHeading(content: string, sectionTitle: string): string {
   return lines.join("\n").trim();
 }
 
+function inferLevelFromTitle(title: string): number {
+  const normalized = (title || "").trim();
+  if (
+    normalized.toLowerCase().startsWith("chương") ||
+    normalized.toLowerCase().startsWith("chuong")
+  ) {
+    return 1;
+  }
+  const matched = normalized.match(/^(\d+(?:\.\d+)*)/);
+  if (!matched) return 1;
+  return Math.max(1, matched[1].split(".").length);
+}
+
 function buildPreviewMarkdown(project: PreviewProject): string {
   const ordered = [...(project.sections || [])].sort(
     (a, b) => (a.order_index || 0) - (b.order_index || 0),
@@ -89,7 +101,7 @@ function buildPreviewMarkdown(project: PreviewProject): string {
   }
 
   for (const section of ordered) {
-    const level = Math.max(1, Math.min(5, Number(section.level || 1)));
+    const level = Math.max(1, Math.min(5, Number(section.level || inferLevelFromTitle(section.title || ""))));
     const headingPrefix = "#".repeat(level + 1);
     lines.push(`${headingPrefix} ${section.title || "Mục chưa đặt tên"}`);
     lines.push("");
@@ -125,17 +137,10 @@ export default function TeachingMaterialPreview() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [lastSyncedAt, setLastSyncedAt] = useState<string>("");
-  const [isDirty, setIsDirty] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
   const [isDownloadMenuOpen, setIsDownloadMenuOpen] = useState(false);
   const [exportingFormat, setExportingFormat] =
     useState<EditorProjectExportFormat | null>(null);
-  const isDirtyRef = useRef(false);
   const downloadMenuRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    isDirtyRef.current = isDirty;
-  }, [isDirty]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -153,16 +158,14 @@ export default function TeachingMaterialPreview() {
           description: data.description,
           sections: data.sections || [],
         });
-        if (!isDirtyRef.current) {
-          const mapped: EditableSection[] = (data.sections || []).map((s) => ({
-            id: s.id,
-            title: s.title,
-            content: stripSourceCitations(s.content_markdown || ""),
-            order: s.order_index || 0,
-            level: s.level || 1,
-          }));
-          setEditableSections(mapped);
-        }
+        const mapped: EditableSection[] = (data.sections || []).map((s) => ({
+          id: s.id,
+          title: s.title,
+          content: stripSourceCitations(s.content_markdown || ""),
+          order: s.order_index || 0,
+          level: s.level || inferLevelFromTitle(s.title || ""),
+        }));
+        setEditableSections(mapped);
         setError("");
         setLastSyncedAt(new Date().toLocaleTimeString("vi-VN"));
       } catch (e) {
@@ -212,44 +215,12 @@ export default function TeachingMaterialPreview() {
     };
   }, [isDownloadMenuOpen]);
 
-  const handleSectionChange = (sectionId: string, content: string) => {
-    setEditableSections((prev) =>
-      prev.map((item) => (item.id === sectionId ? { ...item, content } : item)),
-    );
-    setIsDirty(true);
-  };
-
-  const saveSection = async (sectionId: string) => {
-    const section = editableSections.find((s) => s.id === sectionId);
-    if (!section) return;
-    await patchEditorSection(sectionId, { content: section.content });
-  };
-
-  const saveAllChanges = async () => {
-    try {
-      setIsSaving(true);
-      for (const section of editableSections) {
-        await patchEditorSection(section.id, { content: section.content });
-      }
-      setIsDirty(false);
-      setLastSyncedAt(new Date().toLocaleTimeString("vi-VN"));
-      setError("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Lưu nội dung thất bại");
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   const handleExportProject = async (format: EditorProjectExportFormat) => {
     if (!projectId) return;
     setIsDownloadMenuOpen(false);
     setExportingFormat(format);
 
     try {
-      if (isDirty) {
-        await saveAllChanges();
-      }
       const blob = await exportEditorProject(projectId, format);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -294,15 +265,24 @@ export default function TeachingMaterialPreview() {
   return (
     <div className="h-screen w-full overflow-y-auto bg-slate-50">
       <header className="sticky top-0 z-10 bg-white border-b px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Eye size={20} className="text-blue-600" />
-          <div>
-            <h1 className="font-semibold text-slate-800">
-              Xem nội dung đã lưu
-            </h1>
-            <p className="text-xs text-slate-500">
-              Tự động cập nhật mỗi 2 giây theo dữ liệu đã lưu
-            </p>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={backToEditor}
+            className="px-3.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold transition-colors flex items-center gap-1 border border-slate-200"
+          >
+            ← Quay lại
+          </button>
+          <div className="h-5 w-px bg-slate-200"></div>
+          <div className="flex items-center gap-3">
+            <Eye size={20} className="text-blue-600" />
+            <div>
+              <h1 className="font-semibold text-slate-800">
+                Xem nội dung đã lưu
+              </h1>
+              <p className="text-xs text-slate-500">
+                Tự động cập nhật mỗi 2 giây theo dữ liệu đã lưu
+              </p>
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-4">
@@ -311,15 +291,6 @@ export default function TeachingMaterialPreview() {
               <RefreshCw size={12} /> Đồng bộ lúc {lastSyncedAt}
             </span>
           )}
-          <button
-            onClick={saveAllChanges}
-            disabled={isSaving || !isDirty}
-            className="px-3 py-1.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm disabled:opacity-50"
-          >
-            <span className="inline-flex items-center gap-1">
-              <Save size={14} /> {isSaving ? "Đang lưu..." : "Lưu thay đổi"}
-            </span>
-          </button>
           <div className="relative" ref={downloadMenuRef}>
             <button
               onClick={() => setIsDownloadMenuOpen((prev) => !prev)}
@@ -348,12 +319,6 @@ export default function TeachingMaterialPreview() {
               </div>
             )}
           </div>
-          <button
-            onClick={backToEditor}
-            className="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-sm"
-          >
-            ← Quay lại
-          </button>
         </div>
       </header>
 
@@ -377,44 +342,77 @@ export default function TeachingMaterialPreview() {
         )}
         {!loading && !error && (
           <div className="space-y-4">
-            <section className="bg-white border rounded-xl p-6">
-              <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-3">
-                Chỉnh sửa nội dung đã lưu trước khi tải về
-              </h2>
-              <div className="space-y-4 max-h-[50vh] overflow-y-auto pr-1">
-                {editableSections
-                  .slice()
-                  .sort((a, b) => a.order - b.order)
-                  .map((section) => (
-                    <div
-                      key={section.id}
-                      className="border rounded-lg p-3 bg-slate-50"
-                    >
-                      <div className="font-medium text-slate-800 mb-2">
-                        {section.title}
-                      </div>
-                      <textarea
-                        value={section.content}
-                        onChange={(e) =>
-                          handleSectionChange(section.id, e.target.value)
-                        }
-                        className="w-full min-h-[140px] p-3 rounded-md border bg-white text-sm font-mono outline-none focus:ring-2 ring-blue-200"
-                      />
-                      <div className="mt-2 flex justify-end">
-                        <button
-                          onClick={() => void saveSection(section.id)}
-                          className="text-xs px-2.5 py-1 rounded-md border border-slate-200 hover:bg-white text-slate-600"
-                        >
-                          Lưu mục này
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            </section>
-
-            <article className="bg-white border rounded-xl p-6 prose markdown-preview max-w-none">
-              <MarkdownViewer content={markdown} className="!p-0 !border-0 bg-transparent" />
+            <style>{`
+              .markdown-preview h1 {
+                font-size: 2.2rem !important;
+                color: #1e3a8a !important;
+                font-weight: 800 !important;
+                margin-top: 1.5rem !important;
+                margin-bottom: 2rem !important;
+                border-bottom: 3px solid #3b82f6 !important;
+                padding-bottom: 0.75rem !important;
+              }
+              .markdown-preview h2 {
+                font-size: 1.75rem !important;
+                color: #0f766e !important;
+                font-weight: 700 !important;
+                margin-top: 2rem !important;
+                margin-bottom: 1rem !important;
+                padding-left: 0.75rem !important;
+                border-left: 4px solid #0f766e !important;
+                border-bottom: none !important;
+              }
+              .markdown-preview h3 {
+                font-size: 1.35rem !important;
+                color: #1e293b !important;
+                font-weight: 700 !important;
+                margin-top: 1.5rem !important;
+                margin-bottom: 0.75rem !important;
+                padding-left: 0.5rem !important;
+                border-left: 2px solid #cbd5e1 !important;
+              }
+              .markdown-preview h4 {
+                font-size: 1.15rem !important;
+                color: #334155 !important;
+                font-weight: 600 !important;
+                margin-top: 1.25rem !important;
+                margin-bottom: 0.5rem !important;
+                padding-left: 0.5rem !important;
+                border-left: none !important;
+              }
+              .markdown-preview h5 {
+                font-size: 1rem !important;
+                color: #475569 !important;
+                font-weight: 600 !important;
+                font-style: italic !important;
+                margin-top: 1rem !important;
+                margin-bottom: 0.5rem !important;
+                padding-left: 0.5rem !important;
+                border-left: none !important;
+              }
+              .markdown-preview p {
+                font-size: 0.975rem !important;
+                color: #334155 !important;
+                line-height: 1.7 !important;
+                margin-bottom: 0.85rem !important;
+              }
+              .markdown-preview ul, .markdown-preview ol {
+                padding-left: 1.5rem !important;
+                margin-bottom: 1rem !important;
+              }
+              .markdown-preview li {
+                font-size: 0.975rem !important;
+                color: #334155 !important;
+                line-height: 1.7 !important;
+                margin-bottom: 0.4rem !important;
+              }
+              .markdown-preview li p {
+                display: inline !important;
+                margin: 0 !important;
+              }
+            `}</style>
+            <article className="bg-white border rounded-xl p-8 prose markdown-preview max-w-none shadow-sm">
+              <EnhancedMarkdownRenderer content={markdown} className="!p-0 !border-0 bg-transparent" />
             </article>
           </div>
         )}
