@@ -214,3 +214,26 @@ body {
 .animate-sweep {
   animation: loading-sweep 1.5s infinite linear;
 }
+
+/* AI selection edit highlight animations */
+@keyframes pulse-shimmer {
+  0% {
+    background-color: rgba(59, 130, 246, 0.15);
+    box-shadow: 0 0 4px rgba(59, 130, 246, 0.4);
+  }
+  50% {
+    background-color: rgba(59, 130, 246, 0.3);
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.7);
+  }
+  100% {
+    background-color: rgba(59, 130, 246, 0.15);
+    box-shadow: 0 0 4px rgba(59, 130, 246, 0.4);
+  }
+}
+
+.ai-editing-highlight {
+  animation: pulse-shimmer 2s infinite ease-in-out;
+  border-radius: 4px;
+  padding: 2px 0;
+  transition: all 0.3s ease;
+}

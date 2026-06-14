@@ -31,10 +31,10 @@ import {
   getEditorProjectDetail,
   patchEditorSection,
   reorderEditorSections,
-  updateEditorProject,
   getSectionHistory,
   restoreSectionHistory,
   getEditorSection,
+  getSuggestedPrompt,
   type EditorProjectExportFormat,
   type EditorSection,
 } from "../services/api";
@@ -115,6 +115,13 @@ function normalizePromptKey(text: string): string {
 }
 
 const TOC_PROMPT_SUGGESTION = "Tạo dàn ý bài giảng chi tiết, bao quát đầy đủ các tài liệu nguồn đã chọn";
+
+const SUGGEST_PROMPT_TYPES = [
+  { id: "theory", label: "📖 Lý thuyết", name: "Lý thuyết" },
+  { id: "exercise", label: "📝 Bài tập", name: "Bài tập & Câu hỏi" },
+  { id: "example", label: "💡 Tình huống", name: "Tình huống & Ví dụ" },
+  { id: "discussion", label: "💬 Thảo luận", name: "Thảo luận nhóm" },
+];
 
 // The recommended workflow for generating a lecture
 const GENERATION_FLOW_STEPS = [
@@ -659,6 +666,10 @@ export default function TeachingMaterialEditor() {
   });
   const [structurePromptText, setStructurePromptText] = useState("");
   const [isUpdatingStructure, setIsUpdatingStructure] = useState(false);
+  const [suggestingPromptId, setSuggestingPromptId] = useState<string>("");
+  const [showPromptSuggestions, setShowPromptSuggestions] = useState<boolean>(false);
+  const [activeSuggestTab, setActiveSuggestTab] = useState<string>("theory");
+  const [suggestedPrompts, setSuggestedPrompts] = useState<Record<string, string>>({});
 
   interface HistoryEntry {
     id: number;
@@ -678,7 +689,6 @@ export default function TeachingMaterialEditor() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [projectTitle, setProjectTitle] = useState("Dự án bài giảng");
-  const [projectTone, setProjectTone] = useState<string>("academic");
   const [outlinePrompt, setOutlinePrompt] = useState("");
   const [isGeneratingOutline, setIsGeneratingOutline] = useState(false);
   const [showOutlinePromptSuggestionHint, setShowOutlinePromptSuggestionHint] =
@@ -736,7 +746,6 @@ export default function TeachingMaterialEditor() {
       }
 
       setProjectTitle(project.title || "Dự án bài giảng");
-      setProjectTone(project.teaching_tone || "academic");
       const persistedChunks: Record<string, Chunk[]> = {};
       const persistedEvaluations: Record<string, SectionEvaluation | null> = {};
 
@@ -1094,6 +1103,44 @@ export default function TeachingMaterialEditor() {
   const updateSection = (sectionId: string, updates: Partial<Section>) => {
     setSectionLocal(sectionId, updates);
     scheduleSave(sectionId, updates);
+  };
+
+  useEffect(() => {
+    setSuggestedPrompts({});
+    setShowPromptSuggestions(false);
+    setActiveSuggestTab("theory");
+  }, [activeSectionId]);
+
+  const handleSuggestPrompt = async (sectionId: string, promptType: string = "theory") => {
+    if (!projectId || !sectionId) return;
+    try {
+      setSuggestingPromptId(sectionId);
+      setError("");
+      const res = await getSuggestedPrompt(projectId, sectionId, promptType);
+      if (res.success && res.suggested_prompt) {
+        setSuggestedPrompts((prev) => ({
+          ...prev,
+          [promptType]: res.suggested_prompt,
+        }));
+      } else {
+        toastService.error("Không thể lấy gợi ý prompt.");
+      }
+    } catch (err) {
+      toastService.error("Lỗi khi kết nối với máy chủ.");
+    } finally {
+      setSuggestingPromptId("");
+    }
+  };
+
+
+
+  const handleSelectSuggestTab = (tabId: string) => {
+    setActiveSuggestTab(tabId);
+  };
+
+  const handleToggleSuggestions = () => {
+    if (!activeSectionId) return;
+    setShowPromptSuggestions(!showPromptSuggestions);
   };
 
   const hasGeneratedContent = (section: Section): boolean => {
@@ -1624,17 +1671,7 @@ export default function TeachingMaterialEditor() {
     }
   };
 
-  const handleUpdateTone = async (newTone: string) => {
-    if (!projectId) return;
-    try {
-      setProjectTone(newTone);
-      await updateEditorProject(projectId, { teaching_tone: newTone });
-      toastService.success("Đã cập nhật giọng văn bài giảng.");
-    } catch (e) {
-      toastService.error("Không thể cập nhật giọng văn.");
-      setProjectTone(projectTone); // Revert
-    }
-  };
+
 
   const handleBackToList = async () => {
     try {
@@ -1793,16 +1830,6 @@ export default function TeachingMaterialEditor() {
             <span className="truncate max-w-[200px] lg:max-w-[320px]" title={projectTitle}>{projectTitle}</span>
           </h1>
 
-          <select
-            value={projectTone}
-            onChange={(e) => void handleUpdateTone(e.target.value)}
-            className="text-xs font-semibold border border-slate-200/80 rounded-full px-3 py-1.5 bg-slate-50/50 text-slate-700 outline-none hover:bg-slate-100/80 transition duration-200 focus:ring-2 focus:ring-blue-500/20 shrink-0 cursor-pointer shadow-sm"
-          >
-            <option value="academic">🎓 Hàn lâm</option>
-            <option value="inspiring">🌟 Truyền cảm hứng</option>
-            <option value="practical">🛠️ Thực tiễn</option>
-          </select>
-
           {/* Auto Save Status */}
           <div className="ml-4 flex items-center text-xs font-medium shrink-0 bg-slate-50 px-2.5 py-1 rounded-full border border-slate-100">
             {saveStatus === "saving" && (
@@ -1833,6 +1860,14 @@ export default function TeachingMaterialEditor() {
                 <Eye size={15} />
                 <span>Xem trước</span>
               </button>
+
+              <button
+                onClick={() => handleOpenQuizTab()}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg font-medium transition duration-200 text-sm shadow-sm"
+              >
+                <HelpCircle size={15} className="text-violet-500" />
+                <span>Luyện tập Quiz</span>
+              </button>
               
               <div className="relative" ref={downloadMenuRef}>
                 <button
@@ -1847,22 +1882,6 @@ export default function TeachingMaterialEditor() {
 
                 {isDownloadMenuOpen && (
                   <div className="absolute right-0 top-full mt-2 w-56 rounded-xl border border-slate-200 bg-white shadow-xl z-30 overflow-hidden divide-y divide-slate-100 p-1.5 animate-in fade-in slide-in-from-top-2 duration-150">
-                    <div className="py-1">
-                      <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                        Tài nguyên AI
-                      </div>
-                      <button
-                        onClick={() => {
-                          setIsDownloadMenuOpen(false);
-                          handleOpenQuizTab();
-                        }}
-                        className="w-full flex items-center gap-2.5 text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 rounded-lg transition duration-150"
-                      >
-                        <HelpCircle size={15} className="text-violet-500" />
-                        <span className="font-medium text-slate-700">Luyện tập Quiz</span>
-                      </button>
-                    </div>
-                    
                     <div className="py-1">
                       <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                         Tải về bài giảng
@@ -2404,17 +2423,67 @@ export default function TeachingMaterialEditor() {
                     onChange={(e) =>
                       updateSection(activeSection.id, { title: e.target.value })
                     }
-                    className="text-2xl font-bold bg-transparent border-none outline-none w-full text-slate-800 mb-4 placeholder-slate-300 font-display focus:ring-0"
+                    className="text-xl font-bold bg-transparent border-none outline-none w-full text-slate-800 mb-4 placeholder-slate-300 font-display focus:ring-0"
                     placeholder="Tên section (VD: Mục tiêu bài học)..."
                   />
 
                   <div className="bg-slate-50/60 hover:bg-slate-50 border border-slate-200/80 rounded-xl p-4 relative group focus-within:border-blue-500 focus-within:bg-white focus-within:ring-4 focus-within:ring-blue-500/10 transition-all duration-200 shadow-sm">
                     <div className="flex items-start gap-4">
                       <div className="flex-1">
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-                          Yêu cầu cho AI (Prompt)
-                        </label>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                            Yêu cầu cho AI (Prompt)
+                          </label>
+                          <div className="flex items-center gap-3">
+                            {/* Tooltip Hướng dẫn viết prompt */}
+                            <div className="relative group/tooltip inline-block select-none">
+                              <div className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-blue-500 cursor-help transition-colors duration-150 py-0.5">
+                                <HelpCircle size={13} className="shrink-0" />
+                                <span className="font-medium">Hướng dẫn</span>
+                              </div>
+                              <div className="absolute top-full right-0 mt-2 w-80 p-4 bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl shadow-xl opacity-0 invisible group-hover/tooltip:opacity-100 group-hover/tooltip:visible transition-all duration-200 z-50 text-xs text-slate-600 pointer-events-none group-hover/tooltip:pointer-events-auto leading-relaxed">
+                                <p className="font-bold text-slate-800 mb-2.5 flex items-center gap-1.5 text-sm">
+                                  ✨ Hướng dẫn viết Prompt hiệu quả
+                                </p>
+                                <ul className="space-y-2.5 list-none pl-0 text-left">
+                                  <li className="flex items-start gap-1.5">
+                                    <span className="shrink-0 mt-0.5">🎯</span>
+                                    <span><strong className="text-slate-800 font-bold">Rõ ràng & Cụ thể:</strong> Nêu rõ chủ thể (ví dụ: viết <em>"ví dụ thực tế về Agile"</em> thay vì chỉ ghi <em>"ví dụ"</em>), đặc biệt ở các tiểu mục con để AI hiểu đúng ngữ cảnh.</span>
+                                  </li>
+                                  <li className="flex items-start gap-1.5">
+                                    <span className="shrink-0 mt-0.5">⚙️</span>
+                                    <span><strong className="text-slate-800 font-bold">Cấu trúc vs Nội dung:</strong> Nhập prompt dạng <em>"thêm mục 1.1.1..."</em> sẽ kích hoạt tạo thêm nhánh mục mới bên trái. Còn gõ prompt mô tả kiến thức sẽ sinh bài giảng chi tiết cho mục hiện tại.</span>
+                                  </li>
+                                  <li className="flex items-start gap-1.5">
+                                    <span className="shrink-0 mt-0.5">⚠️</span>
+                                    <span><strong className="text-slate-800 font-bold">Ngoài tài liệu gốc:</strong> Tránh yêu cầu kiến thức không có trong các tài liệu nguồn đã tải lên. Hệ thống bắt buộc AI chỉ được trích dẫn thông tin trong sách/tài liệu được chọn.</span>
+                                  </li>
+                                  <li className="flex items-start gap-1.5">
+                                    <span className="shrink-0 mt-0.5">🌐</span>
+                                    <span><strong className="text-slate-800 font-bold">Thuật ngữ kỹ thuật:</strong> Nếu viết thuật ngữ tiếng Việt khó dịch, hãy đính kèm thuật ngữ tiếng Anh gốc trong prompt để AI tra cứu sách chuẩn xác.</span>
+                                  </li>
+                                </ul>
+                              </div>
+                            </div>
+
+                            {/* Nút Gợi ý Prompt */}
+                            <button
+                              type="button"
+                              onClick={handleToggleSuggestions}
+                              className={`text-xs font-semibold flex items-center gap-1.5 py-1 px-2.5 rounded-lg border transition-all duration-150 ${
+                                showPromptSuggestions
+                                  ? "text-cyan-800 bg-cyan-100 border-cyan-200 shadow-sm"
+                                  : "text-cyan-600 border-transparent hover:text-cyan-700 hover:bg-slate-100"
+                              }`}
+                              title="Tự động tạo prompt mẫu chi tiết bám sát tài liệu nguồn"
+                            >
+                              <Sparkles size={12} className={suggestingPromptId === activeSection.id ? "animate-spin text-cyan-500" : "text-cyan-500"} />
+                              <span>💡 Gợi ý Prompt</span>
+                            </button>
+                          </div>
+                        </div>
                         <textarea
+                          spellCheck={false}
                           ref={promptInputRef}
                           value={activeSection.prompt}
                           onChange={(e) => {
@@ -2422,10 +2491,10 @@ export default function TeachingMaterialEditor() {
                               prompt: e.target.value,
                             });
                             e.target.style.height = "auto";
-                            e.target.style.height = `${e.target.scrollHeight}px`;
+                            e.target.style.height = `${Math.min(120, e.target.scrollHeight)}px`;
                           }}
                           rows={1}
-                          className="w-full bg-transparent border-none outline-none resize-none text-slate-700 min-h-[40px] max-h-[300px] overflow-y-auto text-sm leading-relaxed placeholder:text-slate-400/80"
+                          className="w-full bg-transparent border-none outline-none resize-none text-slate-700 min-h-[40px] max-h-[120px] overflow-y-auto text-sm leading-relaxed placeholder:text-slate-400/80 custom-scrollbar"
                           placeholder="Hãy mô tả chi tiết yêu cầu của bạn, càng mô tả chi tiết, tài liệu tạo ra càng chính xác."
                         />
                         {/* ⚠️ Order warning */}
@@ -2435,9 +2504,8 @@ export default function TeachingMaterialEditor() {
                             <span>{sectionOrderWarning.replace(/^⚠️\s*/, "")}</span>
                           </div>
                         )}
-
                       </div>
-                      <div className="shrink-0 flex flex-col items-end gap-2.5">
+                      <div className="shrink-0 flex flex-col justify-start">
                         <button
                           disabled={activeSection.isGenerating}
                           onClick={() => handleGenerate(activeSection.id)}
@@ -2450,53 +2518,113 @@ export default function TeachingMaterialEditor() {
                           }`}
                         >
                           {activeSection.isGenerating ? (
-                            <Loader2 size={15} className="animate-spin" />
-                          ) : activeSection.content ? (
-                            <RefreshCw size={15} />
+                            <>
+                              <Loader2 size={16} className="animate-spin text-slate-400" />
+                              <span>Đang xử lý...</span>
+                            </>
                           ) : (
-                            <Play size={15} />
+                            <>
+                              <Play size={14} />
+                              <span>{activeSection.content ? "Tạo lại" : "Tạo nội dung"}</span>
+                            </>
                           )}
-                          <span>
-                            {activeSection.isGenerating
-                              ? "Đang tạo..."
-                              : activeSection.content
-                                ? "Tạo lại"
-                                : "Tạo nội dung"}
-                          </span>
                         </button>
-
-                        {/* Tooltip Hướng dẫn viết prompt */}
-                        <div className="relative group/tooltip inline-block select-none mr-2">
-                          <div className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-blue-500 cursor-help transition-colors duration-150 py-0.5">
-                            <HelpCircle size={13} className="shrink-0" />
-                            <span className="font-medium">Hướng dẫn viết prompt</span>
-                          </div>
-                          <div className="absolute top-full right-0 mt-2 w-80 p-4 bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl shadow-xl opacity-0 invisible group-hover/tooltip:opacity-100 group-hover/tooltip:visible transition-all duration-200 z-50 text-xs text-slate-600 pointer-events-none group-hover/tooltip:pointer-events-auto leading-relaxed">
-                            <p className="font-bold text-slate-800 mb-2.5 flex items-center gap-1.5 text-sm">
-                              ✨ Hướng dẫn viết Prompt hiệu quả
-                            </p>
-                            <ul className="space-y-2.5 list-none pl-0">
-                              <li className="flex items-start gap-1.5">
-                                <span className="shrink-0 mt-0.5">🎯</span>
-                                <span><strong className="text-slate-800 font-bold">Rõ ràng & Cụ thể:</strong> Nêu rõ chủ thể (ví dụ: viết <em>"ví dụ thực tế về Agile"</em> thay vì chỉ ghi <em>"ví dụ"</em>), đặc biệt ở các tiểu mục con để AI hiểu đúng ngữ cảnh.</span>
-                              </li>
-                              <li className="flex items-start gap-1.5">
-                                <span className="shrink-0 mt-0.5">⚙️</span>
-                                <span><strong className="text-slate-800 font-bold">Cấu trúc vs Nội dung:</strong> Nhập prompt dạng <em>"thêm mục 1.1.1..."</em> sẽ kích hoạt tạo thêm nhánh mục mới bên trái. Còn gõ prompt mô tả kiến thức sẽ sinh bài giảng chi tiết cho mục hiện tại.</span>
-                              </li>
-                              <li className="flex items-start gap-1.5">
-                                <span className="shrink-0 mt-0.5">⚠️</span>
-                                <span><strong className="text-slate-800 font-bold">Ngoài tài liệu gốc (Out of KB):</strong> Tránh yêu cầu kiến thức không có trong các tài liệu nguồn đã tải lên. Hệ thống bắt buộc AI chỉ được trích dẫn thông tin trong sách/tài liệu được chọn.</span>
-                              </li>
-                              <li className="flex items-start gap-1.5">
-                                <span className="shrink-0 mt-0.5">🌐</span>
-                                <span><strong className="text-slate-800 font-bold">Thuật ngữ kỹ thuật:</strong> Nếu viết thuật ngữ tiếng Việt khó dịch, hãy đính kèm thuật ngữ tiếng Anh gốc trong prompt để AI tra cứu sách chuẩn xác (ví dụ: <em>"vẽ sequence diagram"</em>).</span>
-                              </li>
-                            </ul>
-                          </div>
-                        </div>
                       </div>
                     </div>
+
+                    {/* 💡 Suggested prompt display card (Full width below the horizontal layout) */}
+                    {showPromptSuggestions && (
+                      <div className="mt-3.5 p-3.5 bg-cyan-50/50 border border-cyan-100 rounded-xl text-xs text-cyan-800 flex flex-col gap-3 animate-in fade-in duration-200">
+                        <div className="flex items-center justify-between border-b border-cyan-100/50 pb-2">
+                          <span className="font-bold flex items-center gap-1">
+                            <Sparkles size={12} className="text-cyan-600" />
+                            Gợi ý câu lệnh dựa trên tài liệu:
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setShowPromptSuggestions(false)}
+                            className="text-[10px] text-slate-400 hover:text-slate-600 font-semibold"
+                          >
+                            Đóng
+                          </button>
+                        </div>
+
+                        {/* Prompt Type Tabs */}
+                        <div className="flex flex-wrap gap-1">
+                          {SUGGEST_PROMPT_TYPES.map((t) => {
+                            const isActive = activeSuggestTab === t.id;
+                            return (
+                              <button
+                                key={t.id}
+                                type="button"
+                                onClick={() => handleSelectSuggestTab(t.id)}
+                                className={`px-2.5 py-1 rounded-md font-semibold text-[10px] transition-all duration-150 ${
+                                  isActive
+                                    ? "bg-cyan-600 text-white shadow-sm"
+                                    : "bg-white/95 text-cyan-800 hover:bg-cyan-100 border border-cyan-200/50"
+                                }`}
+                              >
+                                {t.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Active Tab Prompt Content */}
+                        <div className="bg-white/80 rounded-lg p-2.5 min-h-[60px] flex flex-col justify-between gap-2.5 border border-cyan-100/40">
+                          {suggestingPromptId === activeSection.id ? (
+                            <div className="flex items-center justify-center gap-1.5 py-3 text-cyan-600 font-medium">
+                              <Loader2 size={14} className="animate-spin" />
+                              <span>Đang sinh prompt {SUGGEST_PROMPT_TYPES.find(t => t.id === activeSuggestTab)?.name}...</span>
+                            </div>
+                          ) : suggestedPrompts[activeSuggestTab] ? (
+                            <>
+                              <p className="italic leading-relaxed text-slate-700 font-medium text-[11px] text-left">
+                                "{suggestedPrompts[activeSuggestTab]}"
+                              </p>
+                              <div className="flex justify-between items-center pt-1.5 border-t border-cyan-100/30">
+                                <button
+                                  type="button"
+                                  disabled={suggestingPromptId === activeSection.id}
+                                  onClick={() => handleSuggestPrompt(activeSection.id, activeSuggestTab)}
+                                  className="text-[10px] text-cyan-600 hover:text-cyan-800 font-bold flex items-center gap-1 disabled:opacity-50"
+                                >
+                                  <RefreshCw size={10} className={suggestingPromptId === activeSection.id ? "animate-spin" : ""} />
+                                  <span>Tạo lại gợi ý</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    updateSection(activeSection.id, { prompt: suggestedPrompts[activeSuggestTab] });
+                                    // Trigger textarea resize
+                                    window.setTimeout(() => {
+                                      if (promptInputRef.current) {
+                                        promptInputRef.current.style.height = "auto";
+                                        promptInputRef.current.style.height = `${Math.min(120, promptInputRef.current.scrollHeight)}px`;
+                                      }
+                                    }, 50);
+                                  }}
+                                  className="text-[10px] bg-cyan-600 text-white px-2.5 py-1 rounded-md hover:bg-cyan-700 font-bold shadow-sm shadow-cyan-600/10"
+                                >
+                                  Áp dụng Prompt này
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="flex flex-col items-center justify-center py-3 gap-1.5">
+                              <p className="text-slate-400 font-medium">Chưa có gợi ý cho mục này.</p>
+                              <button
+                                type="button"
+                                onClick={() => handleSuggestPrompt(activeSection.id, activeSuggestTab)}
+                                className="text-[10px] bg-cyan-600 text-white px-2.5 py-0.5 rounded-md hover:bg-cyan-700 font-bold"
+                              >
+                                Tải gợi ý
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 

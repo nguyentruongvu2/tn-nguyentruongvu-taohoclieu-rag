@@ -171,7 +171,7 @@ export function QuizCard({
   if (isEditing) {
     return (
       <div id={`quiz-card-${item.id}`} className={cardClass} style={{ animationDelay: `${index * 0.04}s`, border: `2px solid ${ACCENT}` }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
           <span style={{ fontSize: 14, fontWeight: 700, color: ACCENT }}>
             ✏️ Đang chỉnh sửa Câu {index + 1}
           </span>
@@ -194,6 +194,19 @@ export function QuizCard({
             <option value="application">Áp dụng</option>
             <option value="analysis">Phân tích</option>
           </select>
+        </div>
+
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
+          {item.chapter && (
+            <span style={{ fontSize: 11, padding: "4px 8px", background: "rgba(0,0,0,0.04)", borderRadius: 6, color: "#64748b", fontWeight: 600 }}>
+              📖 Chương: {item.chapter}
+            </span>
+          )}
+          {item.topic && (
+            <span style={{ fontSize: 11, padding: "4px 8px", background: "rgba(0,0,0,0.04)", borderRadius: 6, color: "#64748b", fontWeight: 600 }}>
+              🏷️ Chủ đề: {item.topic}
+            </span>
+          )}
         </div>
 
         <div style={{ marginBottom: 12 }}>
@@ -430,6 +443,36 @@ export function QuizCard({
           >
             {TYPE_LABELS[item.type] ?? item.type}
           </span>
+
+          {/* Chapter badge */}
+          {item.chapter && (
+            <span
+              className="qp-type-badge"
+              style={{
+                background: "rgba(30, 41, 59, 0.08)",
+                color: "#475569",
+                border: "1px solid rgba(71, 85, 105, 0.15)",
+              }}
+              title={`Chương: ${item.chapter}`}
+            >
+              📖 {item.chapter}
+            </span>
+          )}
+
+          {/* Topic badge */}
+          {item.topic && (
+            <span
+              className="qp-type-badge"
+              style={{
+                background: "rgba(13, 148, 136, 0.08)",
+                color: "#0f766e",
+                border: "1px solid rgba(13, 148, 136, 0.15)",
+              }}
+              title={`Chủ đề: ${item.topic}`}
+            >
+              🏷️ {item.topic}
+            </span>
+          )}
         </div>
 
         {/* Action icons / Result icon */}

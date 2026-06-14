@@ -207,3 +207,33 @@ export const getEditorSection = async (
   }>(`/sections/${encodeURIComponent(sectionId)}`);
   return response.data.section;
 };
+
+export const editSelection = async (payload: {
+  project_id: string;
+  section_id: string;
+  selected_text: string;
+  prompt: string;
+}): Promise<{
+  success: boolean;
+  content: string;
+}> => {
+  const response = await apiClient.post<{
+    success: boolean;
+    content: string;
+  }>("/sections/edit-selection", payload, { suppressErrorToast: true } as any);
+  return response.data;
+};
+
+export const getSuggestedPrompt = async (
+  projectId: string,
+  sectionId: string,
+  promptType?: string,
+): Promise<{ success: boolean; suggested_prompt: string }> => {
+  const url = `/projects/${encodeURIComponent(projectId)}/sections/${encodeURIComponent(sectionId)}/suggest-prompt` +
+    (promptType ? `?prompt_type=${encodeURIComponent(promptType)}` : "");
+  const response = await apiClient.post<{
+    success: boolean;
+    suggested_prompt: string;
+  }>(url);
+  return response.data;
+};

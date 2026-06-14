@@ -475,6 +475,118 @@ export function EnhancedMarkdownRenderer({
       <hr style={{ border: "none", borderTop: "1px solid #e2e8f0", margin: "20px 0" }} />
     ),
 
+    // ── Image or Placeholder ──────────────────────────────────────────────
+    img: ({ src, alt }) => {
+      const isPlaceholder = src?.startsWith("placeholder:");
+      if (src && isPlaceholder) {
+        const description = src.substring("placeholder:".length).trim();
+        return (
+          <div
+            style={{
+              border: "2px dashed #0891b2",
+              background: "linear-gradient(135deg, #ecfeff 0%, #cffafe 100%)",
+              borderRadius: "12px",
+              padding: "20px",
+              margin: "20px 0",
+              textAlign: "center",
+              boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.05)",
+            }}
+          >
+            <div style={{ fontSize: "28px", marginBottom: "8px" }}>📊</div>
+            <h4
+              style={{
+                fontSize: "14px",
+                fontWeight: 700,
+                color: "#164e63",
+                margin: "0 0 6px 0",
+              }}
+            >
+              Khung hình minh họa gợi ý: {alt}
+            </h4>
+            <p
+              style={{
+                fontSize: "12px",
+                color: "#0891b2",
+                margin: "0 0 16px 0",
+                lineHeight: "1.5",
+                fontStyle: "italic",
+              }}
+            >
+              Mô tả gợi ý: {description}
+            </p>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                gap: "10px",
+              }}
+            >
+              <button
+                type="button"
+                style={{
+                  background: "#0891b2",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "6px",
+                  padding: "6px 12px",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  transition: "background 0.2s",
+                }}
+                onClick={() => {
+                  const promptForAi = `Vẽ ảnh minh họa cho bài giảng: ${alt}. Mô tả chi tiết: ${description}`;
+                  navigator.clipboard.writeText(promptForAi);
+                  alert(`Đã copy prompt vẽ ảnh bằng AI vào bộ nhớ tạm:\n"${promptForAi}"\n\nBạn có thể dán vào công cụ tạo ảnh AI (ví dụ: Midjourney, DALL-E) để tạo ảnh.`);
+                }}
+              >
+                🎨 Copy Prompt AI
+              </button>
+              <button
+                type="button"
+                style={{
+                  background: "#fff",
+                  color: "#0891b2",
+                  border: "1px solid #0891b2",
+                  borderRadius: "6px",
+                  padding: "6px 12px",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+                onClick={() => {
+                  const url = prompt("Nhập URL hình ảnh đã tạo để thay thế cho placeholder này:");
+                  if (url && url.trim()) {
+                    window.dispatchEvent(
+                      new CustomEvent("replace-placeholder", {
+                        detail: { placeholderSrc: src, newSrc: url },
+                      })
+                    );
+                  }
+                }}
+              >
+                📤 Chèn URL ảnh
+              </button>
+            </div>
+          </div>
+        );
+      }
+      return (
+        <img
+          src={src}
+          alt={alt}
+          style={{
+            maxWidth: "100%",
+            borderRadius: "8px",
+            margin: "16px auto",
+            display: "block",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+          }}
+        />
+      );
+    },
+
     // Merge caller-provided overrides (e.g. citation links)
     ...components,
   };

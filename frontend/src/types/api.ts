@@ -345,6 +345,9 @@ export interface QuizItem {
   explanations?: Record<string, string>;
   restudy_hint?: string;
   type: "knowledge" | "comprehension" | "application" | "analysis";
+  chapter?: string;
+  topic?: string;
+  difficulty?: string;
 }
 
 export interface AnalyzeContentResponse {

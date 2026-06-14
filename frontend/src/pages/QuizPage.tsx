@@ -133,6 +133,124 @@ function exportToCsv(items: import("../services/api").QuizItem[]): string {
   return [header.join(","), ...rows].join("\n");
 }
 
+function inferSubjectPrefix(lessonContent: string): string {
+  const content = lessonContent || "";
+  const h1Match = content.match(/^#\s+(.+)$/m);
+  if (!h1Match) return "QUIZ";
+  
+  const title = h1Match[1].trim();
+  
+  if (/scrum/i.test(title)) return "SCRUM";
+  if (/project\s+management|quản\s+lý\s+dự\s+án/i.test(title)) return "PM";
+  if (/software\s+engineering|công\s+nghệ\s+phần\s+mềm/i.test(title)) return "SE";
+  
+  const cleanTitle = title.replace(/^(?:Chương|Chuong|Chapter)\s+\d+[:.\s]*/i, "").trim();
+  
+  const normalized = cleanTitle
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[đĐ]/g, "d");
+    
+  const words = normalized.split(/\s+/).filter(w => w.length > 0);
+  if (words.length === 1) {
+    return words[0].substring(0, 4).toUpperCase();
+  }
+  
+  return words
+    .map(w => w[0])
+    .join("")
+    .replace(/[^A-Za-z0-9]/g, "")
+    .toUpperCase()
+    .substring(0, 5);
+}
+
+function generateQuestionCode(
+  subjectPrefix: string,
+  chapterName: string,
+  bloomLevel: string,
+  index: number
+): string {
+  let sub = (subjectPrefix || "QUIZ").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!sub) sub = "QUIZ";
+
+  let chNo = "CH00";
+  const chMatch = chapterName.match(/(?:Chương|Chuong|Chapter)\s*(\d+)/i);
+  if (chMatch) {
+    chNo = `CH${chMatch[1].padStart(2, "0")}`;
+  } else {
+    const anyNum = chapterName.match(/\d+/);
+    if (anyNum) {
+      chNo = `CH${anyNum[0].padStart(2, "0")}`;
+    }
+  }
+
+  const bloomMap: Record<string, string> = {
+    "Nhận biết": "NB",
+    "Thông hiểu": "TH",
+    "Vận dụng": "VD",
+    "Vận dụng cao": "VC",
+  };
+  const bl = bloomMap[bloomLevel] || "GEN";
+  const idxStr = String(index).padStart(3, "0");
+
+  return `${sub}_${chNo}_${bl}_${idxStr}`;
+}
+
+function exportToStandardBankCsv(items: import("../services/api").QuizItem[], lessonContent: string): string {
+  const header = [
+    "QuestionCode",
+    "Chapter",
+    "Topic",
+    "BloomLevel",
+    "Difficulty",
+    "Question",
+    "OptionA",
+    "OptionB",
+    "OptionC",
+    "OptionD",
+    "CorrectAnswer",
+    "Explanation"
+  ];
+  
+  const bloomMap: Record<string, string> = {
+    knowledge: "Nhận biết",
+    comprehension: "Thông hiểu",
+    application: "Vận dụng",
+    analysis: "Vận dụng cao"
+  };
+
+  const subjectPrefix = inferSubjectPrefix(lessonContent);
+
+  const rows = items.map((item, idx) => {
+    const opts = item.options.map((o) => o.replace(/^[A-D][.)\s]+/i, "").trim());
+    while (opts.length < 4) opts.push("");
+    
+    const bloomLevel = bloomMap[item.type] || "Nhận biết";
+    const chapterName = item.chapter || "Chương chung";
+    const topicName = item.topic || "Chung";
+    const difficultyName = item.difficulty || "Dễ";
+
+    const qCode = generateQuestionCode(subjectPrefix, chapterName, bloomLevel, idx + 1);
+
+    return [
+      `"${qCode}"`,
+      `"${chapterName.replace(/"/g, "\"\"")}"`,
+      `"${topicName.replace(/"/g, "\"\"")}"`,
+      `"${bloomLevel.replace(/"/g, "\"\"")}"`,
+      `"${difficultyName.replace(/"/g, "\"\"")}"`,
+      `"${item.question.replace(/"/g, "\"\"")}"`,
+      `"${opts[0].replace(/"/g, "\"\"")}"`,
+      `"${opts[1].replace(/"/g, "\"\"")}"`,
+      `"${opts[2].replace(/"/g, "\"\"")}"`,
+      `"${opts[3].replace(/"/g, "\"\"")}"`,
+      `"${item.correct_answer.toUpperCase()}"`,
+      `"${item.explanation.replace(/"/g, "\"\"")}"`,
+    ].join(",");
+  });
+
+  return [header.join(","), ...rows].join("\n");
+}
+
 /**
  * Export to Printable Text Format (.txt)
  */
@@ -239,6 +357,7 @@ export default function QuizPage() {
   // Modal settings
   const [showRegenModal, setShowRegenModal] = useState(false);
   const [regenCustom, setRegenCustom] = useState("");
+  const [showQuizPromptGuide, setShowQuizPromptGuide] = useState(false);
   const initCalledRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -536,18 +655,18 @@ export default function QuizPage() {
 
   if (loading) {
     return (
-      <div className="qp-page" style={{ background: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
-        <div className="qp-center" style={{ width: "100%", maxWidth: "360px", padding: 24, textAlign: "center", background: "#1e293b", borderRadius: 16, border: "1px solid #334155" }}>
-          <div className="qp-spinner" style={{ margin: "0 auto 16px", borderColor: "#334155", borderTopColor: "#818cf8" }} />
-          <p style={{ color: "#fff", fontSize: 16, margin: "0 0 8px 0", fontWeight: 700 }}>
+      <div className="qp-page" style={{ background: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
+        <div className="qp-center" style={{ width: "100%", maxWidth: "360px", padding: 24, textAlign: "center", background: "#ffffff", borderRadius: 16, border: "1px solid #e2e8f0", boxShadow: "0 10px 30px rgba(0,0,0,0.08)" }}>
+          <div className="qp-spinner" style={{ margin: "0 auto 16px", borderColor: "#f1f5f9", borderTopColor: "#4f46e5" }} />
+          <p style={{ color: "#0f172a", fontSize: 16, margin: "0 0 8px 0", fontWeight: 700 }}>
             Đang tạo câu hỏi quiz... ({progressVal}%)
           </p>
-          <div style={{ height: 6, width: "100%", background: "#334155", borderRadius: 3, overflow: "hidden", marginBottom: 12 }}>
+          <div style={{ height: 6, width: "100%", background: "#f1f5f9", borderRadius: 3, overflow: "hidden", marginBottom: 12 }}>
             <div 
-              style={{ height: "100%", background: "linear-gradient(90deg, #818cf8, #6366f1)", width: `${progressVal}%`, borderRadius: 3, transition: "width 0.2s ease-out" }}
+              style={{ height: "100%", background: "linear-gradient(90deg, #4f46e5, #6366f1)", width: `${progressVal}%`, borderRadius: 3, transition: "width 0.2s ease-out" }}
             />
           </div>
-          <p style={{ color: "#94a3b8", fontSize: 12, margin: 0 }}>
+          <p style={{ color: "#64748b", fontSize: 12, margin: 0 }}>
             Gemini đang phân tích nội dung bài giảng và thiết kế câu hỏi trắc nghiệm
           </p>
         </div>
@@ -657,6 +776,16 @@ export default function QuizPage() {
                     }}
                   >
                     🎮 CSV (.csv) — Kahoot / Quizizz
+                  </button>
+                  <button
+                    className="qp-regen-btn"
+                    style={{ display: "block", width: "100%", textAlign: "left", marginBottom: 4, background: "#0891b2", color: "#ffffff" }}
+                    onClick={() => {
+                      downloadTextFile(exportToStandardBankCsv(items, lessonContent), "ngan_hang_cau_hoi.csv", "text/csv;charset=utf-8");
+                      setShowExportMenu(false);
+                    }}
+                  >
+                    🏫 Ngân hàng câu hỏi (.csv)
                   </button>
                   <button
                     className="qp-regen-btn"
@@ -771,37 +900,61 @@ export default function QuizPage() {
       {/* Regen Modal */}
       {showRegenModal && (
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", width: "100%", maxWidth: "420px", boxShadow: "0 20px 40px rgba(0,0,0,0.2)" }}>
+          <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", width: "100%", maxWidth: "480px", boxShadow: "0 20px 40px rgba(0,0,0,0.2)" }}>
             <h2 style={{ margin: "0 0 16px 0", fontSize: 20 }}>{items.length === 0 ? "Cấu hình Quiz" : "Tạo Quiz mới"}</h2>
             
             <div style={{ marginBottom: 16 }}>
               <label style={{ display: "block", marginBottom: 8, fontSize: 14, fontWeight: 600 }}>Nhập yêu cầu tạo câu hỏi (Prompt)</label>
               <textarea 
+                spellCheck={false}
                 value={regenCustom} 
-                onChange={e => setRegenCustom(e.target.value)}
-                placeholder="VD: Tạo 5 câu hỏi trắc nghiệm nâng cao mức độ Áp dụng cho Chương 2, sử dụng các tình huống thực tế..."
-                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", minHeight: "100px", resize: "none", fontSize: 13 }}
+                onChange={e => {
+                  setRegenCustom(e.target.value);
+                  e.target.style.height = "auto";
+                  e.target.style.height = `${e.target.scrollHeight}px`;
+                }}
+                placeholder="Nhập yêu cầu chi tiết để tạo câu hỏi hiệu quả"
+                style={{ width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #cbd5e1", minHeight: "42px", height: "auto", resize: "none", fontSize: 13, lineHeight: "1.5" }}
               />
             </div>
 
             <div style={{ fontSize: "12px", color: "#475569", background: "#f8fafc", padding: "12px", borderRadius: "8px", marginBottom: 20, border: "1px solid #e2e8f0", lineHeight: "1.6" }}>
-              <strong style={{ color: "#0f172a", display: "block", marginBottom: 4 }}>💡 Cách prompt đạt hiệu quả cao nhất:</strong>
-              <ul style={{ margin: 0, paddingLeft: "16px", display: "flex", flexDirection: "column", gap: "2px", marginBottom: "8px" }}>
-                <li>Nêu rõ số lượng cụ thể (VD: <em>"tạo 3 câu..."</em>, <em>"5 câu..."</em>).</li>
-                <li>Nêu rõ Chương/Mục kiểm tra (VD: <em>"về Chương 1"</em>, <em>"Mục 2.1"</em>).</li>
-                <li>Nêu rõ mức độ Bloom mong muốn (<em>Nhận biết</em>, <em>Thông hiểu</em>, <em>Áp dụng</em>, <em>Phân tích</em>).</li>
-              </ul>
-              <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "6px", fontSize: "11px", color: "#64748b" }}>
-                <strong>Ví dụ đầy đủ:</strong> <em>"Tạo 5 câu hỏi nâng cao mức độ Nhận biết và Thông hiểu về các  khái niệm cốt lõi trong Mục 1.1 Công nghệ phần mềm."</em>
+              <div 
+                onClick={() => setShowQuizPromptGuide(!showQuizPromptGuide)}
+                style={{ 
+                  color: "#0f172a", 
+                  fontWeight: 700, 
+                  cursor: "pointer", 
+                  display: "flex", 
+                  alignItems: "center", 
+                  justifyContent: "space-between",
+                  userSelect: "none"
+                }}
+              >
+                <span>💡 Cách prompt đạt hiệu quả cao nhất</span>
+                <span style={{ fontSize: "10px", color: "#64748b" }}>{showQuizPromptGuide ? "▼" : "▶"}</span>
               </div>
+              
+              {showQuizPromptGuide && (
+                <div style={{ marginTop: 8 }} className="animate-in fade-in duration-200">
+                  <ul style={{ margin: "0 0 8px 0", paddingLeft: "16px", display: "flex", flexDirection: "column", gap: "2px" }}>
+                    <li>Nêu rõ số lượng cụ thể (VD: <em>"tạo 3 câu..."</em>, <em>"5 câu..."</em>).</li>
+                    <li>Nêu rõ Chương/Mục kiểm tra (VD: <em>"về Chương 1"</em>, <em>"Mục 2.1"</em>).</li>
+                    <li>Nêu rõ mức độ Bloom mong muốn (<em>Nhận biết</em>, <em>Thông hiểu</em>, <em>Áp dụng</em>, <em>Phân tích</em>).</li>
+                  </ul>
+                  <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "6px", fontSize: "11px", color: "#64748b" }}>
+                    <strong>Ví dụ đầy đủ:</strong> <em>"Tạo 5 câu hỏi nâng cao mức độ Nhận biết và Thông hiểu về các khái niệm cốt lõi trong Mục 1.1 Công nghệ phần mềm."</em>
+                  </div>
+                </div>
+              )}
             </div>
             
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {items.length === 0 ? (
-                <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+                <div style={{ display: "flex", gap: 10 }}>
                   <button 
                     onClick={() => { setShowRegenModal(false); handleBack(); }}
-                    style={{ padding: "8px 16px", borderRadius: "6px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontWeight: 600, color: "#475569" }}
+                    style={{ flex: 1, padding: "10px 16px", borderRadius: "8px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontWeight: 600, color: "#475569", fontSize: "13px", textAlign: "center" }}
                   >
                     Quay lại
                   </button>
@@ -810,7 +963,20 @@ export default function QuizPage() {
                       const n = getQuestionsCountFromPrompt(regenCustom);
                       handleRegenerate(n, "mix", regenCustom, "replace");
                     }}
-                    style={{ padding: "8px 16px", borderRadius: "6px", border: "none", background: "#4f46e5", cursor: "pointer", fontWeight: 600, color: "#fff" }}
+                    style={{ 
+                      flex: 1, 
+                      padding: "10px 16px", 
+                      borderRadius: "8px", 
+                      border: "none", 
+                      background: "#4f46e5", 
+                      cursor: "pointer", 
+                      fontWeight: 600, 
+                      color: "#fff", 
+                      fontSize: "13px", 
+                      textAlign: "center",
+                      opacity: !regenCustom.trim() ? 0.6 : 1,
+                      pointerEvents: !regenCustom.trim() ? "none" : "auto"
+                    }}
                     disabled={!regenCustom.trim()}
                   >
                     ✨ Bắt đầu tạo Quiz
@@ -818,35 +984,72 @@ export default function QuizPage() {
                 </div>
               ) : (
                 <>
-                  <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
-                    <button 
-                      onClick={() => setShowRegenModal(false)}
-                      style={{ padding: "8px 16px", borderRadius: "6px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontWeight: 600, color: "#475569" }}
-                    >
-                      Huỷ
-                    </button>
+                  <div style={{ display: "flex", gap: 10 }}>
                     <button 
                       onClick={() => {
                         const n = getQuestionsCountFromPrompt(regenCustom);
                         handleRegenerate(n, "mix", regenCustom, "replace");
                       }}
-                      style={{ padding: "8px 16px", borderRadius: "6px", border: "none", background: "#ef4444", cursor: "pointer", fontWeight: 600, color: "#fff" }}
+                      style={{ 
+                        flex: 1,
+                        padding: "10px 12px", 
+                        borderRadius: "8px", 
+                        border: "none", 
+                        background: "#ef4444", 
+                        cursor: "pointer", 
+                        fontWeight: 600, 
+                        color: "#fff",
+                        fontSize: "13px",
+                        textAlign: "center",
+                        opacity: !regenCustom.trim() ? 0.6 : 1,
+                        pointerEvents: !regenCustom.trim() ? "none" : "auto"
+                      }}
                       title="Xoá tất cả câu hỏi hiện tại và tạo bộ mới"
                       disabled={!regenCustom.trim()}
                     >
                       Tạo mới (Thay thế)
                     </button>
+                    <button 
+                      onClick={() => {
+                        const n = getQuestionsCountFromPrompt(regenCustom);
+                        handleRegenerate(n, "mix", regenCustom, "append");
+                      }}
+                      style={{ 
+                        flex: 1,
+                        padding: "10px 12px", 
+                        borderRadius: "8px", 
+                        border: "none", 
+                        background: "#10b981", 
+                        cursor: "pointer", 
+                        fontWeight: 600, 
+                        color: "#fff",
+                        fontSize: "13px",
+                        textAlign: "center",
+                        opacity: !regenCustom.trim() ? 0.6 : 1,
+                        pointerEvents: !regenCustom.trim() ? "none" : "auto"
+                      }}
+                      title="Giữ nguyên các câu hỏi hiện tại, chỉ tạo thêm câu hỏi mới gộp vào"
+                      disabled={!regenCustom.trim()}
+                    >
+                      Tạo thêm & Gộp vào ({items.length})
+                    </button>
                   </div>
                   <button 
-                    onClick={() => {
-                      const n = getQuestionsCountFromPrompt(regenCustom);
-                      handleRegenerate(n, "mix", regenCustom, "append");
+                    onClick={() => setShowRegenModal(false)}
+                    style={{ 
+                      width: "100%", 
+                      padding: "10px 16px", 
+                      borderRadius: "8px", 
+                      border: "1px solid #cbd5e1", 
+                      background: "#fff", 
+                      cursor: "pointer", 
+                      fontWeight: 600, 
+                      color: "#475569",
+                      fontSize: "13px",
+                      textAlign: "center"
                     }}
-                    style={{ padding: "8px 16px", borderRadius: "6px", border: "none", background: "#10b981", cursor: "pointer", fontWeight: 600, color: "#fff", width: "100%" }}
-                    title="Giữ nguyên các câu hỏi hiện tại, chỉ tạo thêm câu hỏi mới gộp vào"
-                    disabled={!regenCustom.trim()}
                   >
-                    ➕ Tạo thêm & Gộp vào ({items.length} câu hiện có)
+                    Hủy
                   </button>
                 </>
               )}
