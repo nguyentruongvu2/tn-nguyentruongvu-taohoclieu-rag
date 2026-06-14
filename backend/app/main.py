@@ -11,6 +11,22 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+# Patch pdfminer to handle missing 'N' key in ICCBased colorspaces (which throws KeyError: 'N')
+try:
+    import pdfminer.pdftypes
+    _orig_pdfstream_getitem = pdfminer.pdftypes.PDFStream.__getitem__
+    def _patched_pdfstream_getitem(self, name: str):
+        try:
+            return _orig_pdfstream_getitem(self, name)
+        except KeyError as e:
+            if name == "N":
+                return 3
+            raise e
+    pdfminer.pdftypes.PDFStream.__getitem__ = _patched_pdfstream_getitem
+except Exception as e:
+    logging.getLogger(__name__).warning("Failed to monkey patch pdfminer: %s", e)
+
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware

@@ -87,6 +87,16 @@ RULES:
 - MAXIMUM 1 diagram per section.
 - Do NOT use Mermaid for quizzes, titles, or objectives.
 
+═══════════════════════════════════════════════
+SECTION 7: IMAGE PLACEHOLDERS & SCHEMATICS
+═══════════════════════════════════════════════
+If the section describes diagrams, statistical charts, system components, or architectural flows that would benefit heavily from a visual representation (such as bar charts, scatter plots, data flow diagrams, histograms), you MUST insert a Markdown image placeholder with the following format:
+`![Tên sơ đồ/hình ảnh](placeholder: Mô tả chi tiết hình vẽ hoặc sơ đồ cần vẽ/chèn ở đây)`
+Example:
+`![Biểu đồ phân tích tương quan giữa tuổi và thu nhập](placeholder: Biểu đồ phân tán (scatter plot) với trục hoành thể hiện Độ tuổi và trục tung thể hiện Thu nhập (triệu VNĐ). Các chấm tròn màu xanh lam biểu thị các quan sát mẫu, có một đường xu hướng tuyến tính dốc lên thể hiện mối tương quan thuận.)`
+- Use this placeholder for ANY complex concept requiring a visualization.
+- Ensure the description inside the `placeholder:` scheme is detailed enough for a designer or AI image generator to create the exact image.
+
 {tone_instruction}"""
 
 

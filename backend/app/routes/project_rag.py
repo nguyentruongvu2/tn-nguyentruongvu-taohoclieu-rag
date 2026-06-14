@@ -660,15 +660,20 @@ async def generate_section_endpoint(
             "Bạn là một trợ lý chuyên thiết kế cấu trúc mục lục chi tiết bài giảng.\n"
             f"Đề mục cha hiện tại: '{section_title}' (cấp độ/level: {current_level}).\n"
             f"Yêu cầu của giáo viên: '{request.prompt}'\n\n"
-            "Hãy phân tích yêu cầu và trả về một danh sách các đề mục con (subsections) mới cần được chèn ngay dưới đề mục cha này.\n"
-            "Mỗi đề mục con mới cần có:\n"
-            "1. Tên đề mục (title): Phải bắt đầu bằng số thứ tự phân cấp tương ứng (ví dụ: nếu đề mục cha là '1.1 Khái niệm' ở level 2, "
-            "thì đề mục con mới có thể là '1.1.1 Khái niệm cơ bản' ở level 3, '1.1.2 Các thành phần chính' ở level 3).\n"
-            "2. Cấp độ (level): Số nguyên thể hiện cấp độ phân cấp tương ứng (ví dụ: 1, 2, 3, 4).\n\n"
+            "Hãy phân tích yêu cầu và trả về một danh sách các đề mục con (subsections) mới cần được chèn ngay dưới đề mục cha này.\n\n"
+            "RÀNG BUỘC QUAN TRỌNG:\n"
+            "1. Nếu yêu cầu của giáo viên chỉ định rõ tên hoặc số thứ tự của đề mục con cần tạo (ví dụ: 'tạo mục con 1.1.1...'), "
+            "bạn BẮT BUỘC phải tạo đúng đề mục con đó với số thứ tự và phân cấp đó. TUYỆT ĐỐI KHÔNG tự ý bỏ qua đề mục con đó "
+            "để tạo trực tiếp các mục con cấp sâu hơn (ví dụ: không tạo trực tiếp 1.1.1.1, 1.1.1.2 khi chưa có 1.1.1).\n"
+            "2. Chỉ tạo đúng số lượng đề mục con mà giáo viên yêu cầu trong prompt. Không tự ý sinh thêm nhiều mục chi tiết "
+            "khác nếu giáo viên không yêu cầu mở rộng cấu trúc.\n"
+            "3. Mỗi đề mục con mới cần có:\n"
+            "   - Tên đề mục (title): Phải bắt đầu bằng số thứ tự phân cấp tương ứng (ví dụ: nếu đề mục cha là '1.1 Khái niệm' ở level 2, "
+            "thì đề mục con mới có thể là '1.1.1 Khái niệm cơ bản' ở level 3).\n"
+            "   - Cấp độ (level): Số nguyên thể hiện cấp độ phân cấp tương ứng (ví dụ: 1, 2, 3, 4).\n\n"
             "Định dạng đầu ra BẮT BUỘC là một JSON array hợp lệ có cấu trúc như sau:\n"
             "[\n"
-            "  {\"title\": \"1.1.1 Khái niệm cơ bản\", \"level\": 3},\n"
-            "  {\"title\": \"1.1.2 Các thành phần chính\", \"level\": 3}\n"
+            "  {\"title\": \"1.1.1 Khái niệm cơ bản\", \"level\": 3}\n"
             "]\n\n"
             "Chỉ trả về chuỗi JSON hợp lệ. Không bọc trong ```json hay ```. Không thêm lời giải thích hay ký tự nào khác ngoài JSON."
         )
@@ -908,19 +913,37 @@ async def generate_section_endpoint(
                 "content": s_content
             })
 
-    section_prompt = build_section_user_prompt(
-        section_title=section_title,
-        user_prompt=request.prompt,
-        lesson_title=lesson_title,
-        learner_level=str(project.get("level") or ""),
-        existing_section_content=str(section.get("content_markdown") or ""),
-        reference_sections=reference_sections,
-    )
-    if is_main_content:
-        heading_hints = _extract_heading_hints_from_retrieved(retrieved)
-        source_info = _build_source_info_from_retrieved(retrieved)
-        heading_anchor_prompt = _build_main_content_heading_anchor_prompt(heading_hints, source_info)
-        section_prompt = f"{section_prompt}\n\n{heading_anchor_prompt}"
+    existing_content = str(section.get("content_markdown") or "").strip()
+    is_edit_mode = bool(existing_content and request.prompt)
+
+    if is_edit_mode:
+        # ── Edit Mode Prompt ──────────────────────────────────────────────
+        section_prompt = build_section_edit_user_prompt(
+            section_title=section_title,
+            user_prompt=request.prompt,
+            lesson_title=lesson_title,
+            reference_sections=reference_sections,
+        )
+        # Append existing content context
+        section_prompt += (
+            f"\n\nCURRENT SECTION CONTENT TO BE EDITED:\n"
+            f"```\n{existing_content}\n```"
+        )
+    else:
+        # ── Generate Mode Prompt ──────────────────────────────────────────
+        section_prompt = build_section_user_prompt(
+            section_title=section_title,
+            user_prompt=request.prompt,
+            lesson_title=lesson_title,
+            learner_level=str(project.get("level") or ""),
+            existing_section_content=existing_content,
+            reference_sections=reference_sections,
+        )
+        if is_main_content:
+            heading_hints = _extract_heading_hints_from_retrieved(retrieved)
+            source_info = _build_source_info_from_retrieved(retrieved)
+            heading_anchor_prompt = _build_main_content_heading_anchor_prompt(heading_hints, source_info)
+            section_prompt = f"{section_prompt}\n\n{heading_anchor_prompt}"
 
     section_system_prompt = build_project_rag_system_prompt(
         section_title=section_title,
@@ -929,16 +952,29 @@ async def generate_section_endpoint(
     )
 
     # ── Merge ALL structural constraints into initial prompt ──────────────
-    structure_constraints = (
-        "\n\nSTRUCTURAL RULES (MUST FOLLOW):\n"
-        f"- Generate content ONLY for this section: {section_title}\n"
-        "- Do NOT use numeric heading prefixes (1., 2., Chapter, Phần, Chương)\n"
-        "- Do NOT include headings belonging to other sections\n"
-        "- Do NOT output audit/verification scaffolding (Phase 1/2/3, Content Type, Verdict)\n"
-        "- Return only Vietnamese Markdown content grounded in provided context\n"
-        "- Translate any relevant English concepts to Vietnamese, but keep the original English technical terms in parentheses next to them (e.g., Phương pháp Agile (Agile methodology), Kiến trúc hướng dịch vụ (Service-oriented architecture), Sơ đồ tuần tự (Sequence diagram)).\n"
-        "- If context is insufficient, return exactly: NOT_ENOUGH_CONTEXT"
-    )
+    if is_edit_mode:
+        structure_constraints = (
+            "\n\nEDITORIAL RULES (MUST FOLLOW):\n"
+            f"- Refine or modify ONLY the current content to satisfy the prompt: '{request.prompt}'\n"
+            "- Do NOT completely delete necessary theoretical details unless requested.\n"
+            "- Preserve the overall tone and the language.\n"
+            "- Ensure the return output matches the structural format (retaining glossary/quizzes style if already present).\n"
+            "- Do NOT output audit/verification scaffolding.\n"
+            "- Translate any relevant English concepts to Vietnamese, keeping the original English terms in parentheses.\n"
+            "- Return ONLY a valid JSON object matching the contract."
+        )
+    else:
+        structure_constraints = (
+            "\n\nSTRUCTURAL RULES (MUST FOLLOW):\n"
+            f"- Generate content ONLY for this section: {section_title}\n"
+            "- Do NOT use numeric heading prefixes (1., 2., Chapter, Phần, Chương)\n"
+            "- Do NOT include headings belonging to other sections\n"
+            "- Do NOT output audit/verification scaffolding (Phase 1/2/3, Content Type, Verdict)\n"
+            "- Return only Vietnamese Markdown content grounded in provided context\n"
+            "- Translate any relevant English concepts to Vietnamese, but keep the original English technical terms in parentheses next to them (e.g., Phương pháp Agile (Agile methodology), Kiến trúc hướng dịch vụ (Service-oriented architecture), Sơ đồ tuần tự (Sequence diagram)).\n"
+            "- If context is insufficient, return exactly: NOT_ENOUGH_CONTEXT"
+        )
+        
     final_prompt = build_project_rag_combined_prompt(
         user_prompt=request.prompt, task_prompt=section_prompt,
     ) + structure_constraints
@@ -1303,3 +1339,244 @@ async def restore_section_history_endpoint(
         "success": True,
         "section": updated
     }
+
+
+class EditSelectionRequest(BaseModel):
+    project_id: str
+    section_id: str
+    selected_text: str
+    prompt: str
+
+
+@router.post("/sections/edit-selection")
+async def edit_selection_endpoint(
+    request: EditSelectionRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    enforce_rate_limit(current_user["id"])
+
+    project = get_project_for_user(request.project_id, current_user["id"], current_user["role"])
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
+
+    section = get_editor_section_for_user(request.section_id, current_user["id"], current_user["role"])
+    if not section or str(section.get("project_id")) != request.project_id:
+        raise HTTPException(status_code=404, detail="Section not found")
+
+    import unicodedata
+    content_markdown = unicodedata.normalize("NFC", str(section.get("content_markdown") or "").strip())
+    selected_text = unicodedata.normalize("NFC", request.selected_text.strip())
+    
+    if not selected_text:
+        raise HTTPException(status_code=422, detail="Văn bản bôi đen không được rỗng.")
+
+    if selected_text not in content_markdown:
+        raise HTTPException(
+            status_code=422, 
+            detail="Đoạn văn bản bôi đen không khớp với nội dung hiện có trên hệ thống."
+        )
+
+    # ── Call LLM to refine only the selected portion ──────────────────
+    refinement_prompt = (
+        "You are an expert academic text editor.\n"
+        f"We have the following text snippet from a section named '{section['title']}':\n"
+        f"```\n{selected_text}\n```\n\n"
+        f"The user wants you to modify this snippet based on the instruction: '{request.prompt}'\n\n"
+        "CONSTRAINTS:\n"
+        "- Respond in Vietnamese with proper diacritics.\n"
+        "- Modify ONLY the content matching the request.\n"
+        "- Keep the exact tone and do NOT write any preamble, note, conversational explanation, or markdown quotes (```) wrapping the response.\n"
+        "- Return ONLY the final edited/refined text to directly replace the original snippet."
+    )
+
+    try:
+        refined_content, _ = await asyncio.to_thread(
+            rag_pipeline._generate_content_with_failover,
+            refinement_prompt
+        )
+        refined_content = refined_content.strip()
+        # Strip potential markdown code fences if LLM accidentally put them
+        refined_content = re.sub(r"^```(?:markdown)?\s*", "", refined_content, flags=re.IGNORECASE)
+        refined_content = re.sub(r"\s*```$", "", refined_content).strip()
+        refined_content = unicodedata.normalize("NFC", refined_content)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"AI không thể xử lý đoạn văn bản: {str(exc)}")
+
+    # Replace the portion in the original document
+    new_markdown = content_markdown.replace(selected_text, refined_content)
+
+    updated = update_editor_section(
+        section_id=request.section_id,
+        user_id=current_user["id"],
+        role=current_user["role"],
+        content_markdown=new_markdown,
+    )
+
+    # Save to generation history
+    try:
+        add_editor_section_history(
+            project_id=request.project_id,
+            section_id=request.section_id,
+            prompt=f"Sửa đoạn bôi đen: {request.prompt}",
+            content_markdown=new_markdown,
+        )
+    except Exception as exc:
+        logger.error(f"Failed to save history for selection edit: {exc}")
+
+    return {
+        "success": True,
+        "content": new_markdown,
+    }
+
+
+@router.post("/projects/{project_id}/sections/{section_id}/suggest-prompt")
+async def suggest_section_prompt_endpoint(
+    project_id: str,
+    section_id: str,
+    prompt_type: str = "theory",
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    enforce_rate_limit(current_user["id"])
+
+    project = get_project_for_user(project_id, current_user["id"], current_user["role"])
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
+
+    section = get_editor_section_for_user(section_id, current_user["id"], current_user["role"])
+    if not section or str(section.get("project_id")) != project_id:
+        raise HTTPException(status_code=404, detail="Section not found")
+
+    section_title = str(section.get("title") or "")
+
+    # 1. Retrieve context chunks matching the section title
+    source_ids = _normalize_kb_ids(project.get("knowledge_base_ids", []))
+    docs_owned = list_documents(current_user["id"], current_user["role"])
+    source_docs = [d for d in docs_owned if str(d.get("id")) in {str(sid) for sid in source_ids}]
+
+    # Define standard fallbacks based on prompt_type
+    if prompt_type == "exercise":
+        fallback_prompt = f"Dựa trên tài liệu tham khảo, hãy tạo các bài tập ôn tập, câu hỏi củng cố kèm đáp án và giải thích chi tiết cho mục {section_title}."
+    elif prompt_type == "example":
+        fallback_prompt = f"Dựa trên tài liệu tham khảo, hãy xây dựng ví dụ minh họa và tình huống thực tế (case study) cho mục {section_title}."
+    elif prompt_type == "discussion":
+        fallback_prompt = f"Dựa trên tài liệu tham khảo, hãy gợi ý các chủ đề thảo luận nhóm và câu hỏi mở phản biện về mục {section_title}."
+    else:
+        fallback_prompt = f"Dựa trên tài liệu tham khảo, hãy giải thích chi tiết khái niệm {section_title}."
+
+    if not source_docs:
+        return {
+            "success": True,
+            "suggested_prompt": fallback_prompt
+        }
+
+    retrieved = await asyncio.to_thread(
+        _retrieve_context_with_retry,
+        query=section_title,
+        selected_source_docs=source_docs,
+        max_chunks=6,
+    )
+    context_text = _build_context_text(retrieved)
+
+    if not context_text:
+        return {
+            "success": True,
+            "suggested_prompt": fallback_prompt
+        }
+
+    # 2. Call LLM to suggest a highly detailed prompt based on prompt_type
+    if prompt_type == "exercise":
+        task_desc = (
+            "Nhiệm vụ của bạn là tạo ra một gợi ý câu lệnh (prompt) viết bằng tiếng Việt ngắn gọn, chuẩn xác, "
+            "giúp giáo viên yêu cầu AI tạo ra các bài tập củng cố, câu hỏi ôn tập (trắc nghiệm hoặc tự luận) kèm lời giải chi tiết cho đề mục bài giảng hiện tại.\n"
+        )
+        guidelines = (
+            "1. Dựa sát vào thông tin và ngữ cảnh từ tài liệu nguồn (đã được trích xuất trong phần Context).\n"
+            "2. Trong prompt gợi ý, hãy khuyên giáo viên yêu cầu cụ thể về:\n"
+            "   - Số lượng bài tập hoặc câu hỏi ôn tập mong muốn (ví dụ: 3 đến 5 câu).\n"
+            "   - Các nội dung trọng tâm trong phần này cần kiểm tra kiến thức.\n"
+            "   - Yêu cầu cung cấp đáp án chi tiết và giải thích cụ thể cho từng câu hỏi.\n"
+            "   - Số trang tham khảo cụ thể (hãy tìm số trang từ tài liệu nguồn xuất hiện trong Context và ghi vào prompt gợi ý, ví dụ: 'Dựa vào tài liệu tham khảo trang 11-29...').\n"
+        )
+        example_prompt = (
+            "Hãy viết một prompt gợi ý súc tích, tương tự như ví dụ sau:\n"
+            "\"Dựa vào tài liệu tham khảo (trang 11-29), hãy tạo 3 câu hỏi ôn tập (bao gồm 2 câu trắc nghiệm và 1 câu tự luận) kèm đáp án và giải thích chi tiết cho phần Công nghệ phần mềm hướng dự án. Các câu hỏi tập trung vào: Định nghĩa, Đặc điểm nổi bật, và Quy trình cơ bản.\""
+        )
+    elif prompt_type == "example":
+        task_desc = (
+            "Nhiệm vụ của bạn là tạo ra một gợi ý câu lệnh (prompt) viết bằng tiếng Việt ngắn gọn, chuẩn xác, "
+            "giúp giáo viên yêu cầu AI xây dựng các ví dụ minh họa trực quan hoặc một tình huống thực tế (case study) sinh động cho đề mục bài giảng hiện tại.\n"
+        )
+        guidelines = (
+            "1. Dựa sát vào thông tin và ngữ cảnh từ tài liệu nguồn (đã được trích xuất trong phần Context).\n"
+            "2. Trong prompt gợi ý, hãy khuyên giáo viên yêu cầu cụ thể về:\n"
+            "   - Đưa ra một ví dụ thực tế hoặc tình huống (case study) áp dụng khái niệm này vào thực tế.\n"
+            "   - Cách phân tích hoặc giải quyết vấn đề của ví dụ đó.\n"
+            "   - Bài học kinh nghiệm hoặc câu hỏi phân tích từ tình huống.\n"
+            "   - Số trang tham khảo cụ thể (hãy tìm số trang từ tài liệu nguồn xuất hiện trong Context và ghi vào prompt gợi ý, ví dụ: 'Dựa vào tài liệu tham khảo trang 11-29...').\n"
+        )
+        example_prompt = (
+            "Hãy viết một prompt gợi ý súc tích, tương tự như ví dụ sau:\n"
+            "\"Dựa vào tài liệu tham khảo (trang 11-29), hãy xây dựng một tình huống thực tế (case study) về một dự án phần mềm bị thất bại do không áp dụng đúng mô hình quy trình. Phân tích nguyên nhân và bài học rút ra liên quan đến Agile. Trình bày ngắn gọn trong khoảng 200-250 từ.\""
+        )
+    elif prompt_type == "discussion":
+        task_desc = (
+            "Nhiệm vụ của bạn là tạo ra một gợi ý câu lệnh (prompt) viết bằng tiếng Việt ngắn gọn, chuẩn xác, "
+            "giúp giáo viên yêu cầu AI đề xuất các chủ đề thảo luận nhóm, câu hỏi mở mang tính tranh biện hoặc câu hỏi suy luận sâu cho đề mục bài giảng hiện tại.\n"
+        )
+        guidelines = (
+            "1. Dựa sát vào thông tin và ngữ cảnh từ tài liệu nguồn (đã được trích xuất trong phần Context).\n"
+            "2. Trong prompt gợi ý, hãy khuyên giáo viên yêu cầu cụ thể về:\n"
+            "   - Các câu hỏi khêu gợi tư duy phản biện (critical thinking) của sinh viên.\n"
+            "   - Đề tài thảo luận nhóm hoặc hoạt động tương tác nhỏ trên lớp.\n"
+            "   - Định hướng trả lời hoặc tiêu chí chấm điểm gợi ý.\n"
+            "   - Số trang tham khảo cụ thể (hãy tìm số trang từ tài liệu nguồn xuất hiện trong Context và ghi vào prompt gợi ý, ví dụ: 'Dựa vào tài liệu tham khảo trang 11-29...').\n"
+        )
+        example_prompt = (
+            "Hãy viết một prompt gợi ý súc tích, tương tự như ví dụ sau:\n"
+            "\"Dựa vào tài liệu tham khảo (trang 11-29), hãy đề xuất 2 câu hỏi thảo luận nhóm mang tính phản biện về ưu và nhược điểm của việc áp dụng mô hình Agile trong dự án lớn. Gợi ý hướng trả lời và tiêu chí đánh giá cho giáo viên.\""
+        )
+    else:  # "theory"
+        task_desc = (
+            "Nhiệm vụ của bạn là tạo ra một gợi ý câu lệnh (prompt) viết bằng tiếng Việt ngắn gọn, chuẩn xác, giúp giáo viên yêu cầu AI viết nội dung lý thuyết chi tiết cho đề mục bài giảng hiện tại.\n"
+        )
+        guidelines = (
+            "1. Dựa sát vào thông tin và ngữ cảnh từ tài liệu nguồn (đã được trích xuất trong phần Context).\n"
+            "2. Trong prompt gợi ý, hãy khuyên giáo viên yêu cầu cụ thể về:\n"
+            "   - Các khái niệm cốt lõi cần trình bày.\n"
+            "   - Số trang tham khảo cụ thể (hãy tìm số trang từ tài liệu nguồn xuất hiện trong Context và ghi vào prompt gợi ý, ví dụ: 'Dựa vào tài liệu tham khảo trang 11-29...').\n"
+            "   - Cấu trúc trình bày mong muốn (ví dụ: định nghĩa ngắn gọn, giải thích đặc điểm dưới dạng các gạch đầu dòng).\n"
+        )
+        example_prompt = (
+            "Hãy viết một prompt gợi ý súc tích, tương tự như ví dụ sau:\n"
+            "\"Dựa vào tài liệu tham khảo (trang 11-29), hãy trình bày chi tiết về Công nghệ phần mềm hướng dự án. Nội dung cần làm rõ dưới dạng gạch đầu dòng: 1. Định nghĩa, 2. Đặc điểm nổi bật (phát triển phần mềm tùy chỉnh cho một khách hàng theo hợp đồng), 3. Quy trình cơ bản khi bắt đầu dự án. Trình bày ngắn gọn trong khoảng 150-200 từ.\""
+        )
+
+    suggest_prompt_system = (
+        "Bạn là một chuyên gia thiết kế và gợi ý câu lệnh (prompt engineering) cho bài giảng học thuật.\n"
+        f"{task_desc}"
+        f"Đề mục hiện tại: '{section_title}'\n\n"
+        "HƯỚNG DẪN TẠO PROMPT:\n"
+        f"{guidelines}"
+        "3. RÀNG BUỘC ĐỘ DÀI (QUAN TRỌNG): Chỉ trả về một prompt cực kỳ súc tích có độ dài khoảng 3 đến 4 dòng (khoảng 80-120 từ). Tích hợp ngay số trang tham khảo và các ý chính (tối đa 3 gạch đầu dòng ngắn). Không viết đoạn văn quá dài dòng.\n"
+        "4. Trả về định dạng text sạch. Không kèm lời giải thích hay markdown code blocks.\n"
+        f"{example_prompt}"
+    )
+
+    user_prompt = f"Context từ tài liệu nguồn:\n{context_text[:8000]}\n\nHãy tạo prompt gợi ý chi tiết nhất để soạn thảo nội dung cho mục '{section_title}'."
+
+    try:
+        suggested_raw, _ = await asyncio.to_thread(
+            rag_pipeline.generate_with_gemini_from_markdown,
+            context_text,
+            f"{suggest_prompt_system}\n\n{user_prompt}"
+        )
+        suggested_prompt = (suggested_raw or "").strip().strip('"').strip("'").strip()
+    except Exception as exc:
+        logger.error(f"Failed to generate suggested prompt: {exc}")
+        suggested_prompt = fallback_prompt
+
+    return {
+        "success": True,
+        "suggested_prompt": suggested_prompt
+    }
+

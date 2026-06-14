@@ -456,15 +456,21 @@ def index_markdown(
         ids.append(chunk_id)
         texts.append(chunk_text)
         metadatas.append(metadata)
-        embeddings.append(embed_document(pipeline, chunk_text))
 
+    # Batch embed texts and update progress
+    from .embedding_ops import embed_documents
+    
+    def progress_callback(embedded_count, total_count):
         if doc_id:
             try:
-                progress = 30 + int(((idx + 1) / total_docs) * 65)
+                progress = 30 + int((embedded_count / total_count) * 65)
                 from ..db.documents import update_document_progress
                 update_document_progress(doc_id, progress=min(95, progress), status="processing")
             except Exception as e:
-                logger.warning("Failed to update progress: %s", e)
+                logger.warning("Failed to update progress during batch embedding: %s", e)
+
+    embeddings = embed_documents(pipeline, texts, batch_size=100, progress_callback=progress_callback)
+
 
     embeddings, batch_dims = normalize_embedding_batch(texts, embeddings)
     actual_dims = batch_dims or 3072

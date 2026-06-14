@@ -54,6 +54,9 @@ class QuizQuestion(BaseModel):
     explanations: dict[str, str] = Field(default_factory=dict)
     restudy_hint: str = Field(default="") # Hint for what section to re-read if wrong
     type: str
+    chapter: str = Field(default="")
+    topic: str = Field(default="")
+    difficulty: str = Field(default="")
 
 
 class GenerateQuizResponse(BaseModel):
@@ -64,10 +67,10 @@ class GenerateQuizResponse(BaseModel):
 # ── Question-type definitions ─────────────────────────────────────────────────
 
 _Q_TYPES = {
-    "knowledge":     "KNOWLEDGE (Nhận biết): Test recall of facts, terms, basic concepts.",
-    "comprehension": "COMPREHENSION (Hiểu): Test understanding of facts and ideas by organizing, comparing, translating, interpreting.",
-    "application":   "APPLICATION (Áp dụng): Test using acquired knowledge to solve problems in new situations.",
-    "analysis":      "ANALYSIS (Phân tích): Test examining and breaking information into parts, identifying motives or causes.",
+    "knowledge":     "Nhận biết (Knowledge): Tập trung vào Khái niệm, Thuật ngữ, Vai trò, Định nghĩa.",
+    "comprehension": "Thông hiểu (Comprehension): Tập trung vào Giải thích, Mục đích, Ý nghĩa, Nguyên nhân.",
+    "application":   "Vận dụng (Application): Tập trung vào Áp dụng tình huống, Thực hiện quy trình.",
+    "analysis":      "Vận dụng cao (Analysis): Tập trung vào So sánh, Đánh giá, Lựa chọn giải pháp, Phân tích tình huống phức tạp.",
 }
 
 # ── Prompt builder ────────────────────────────────────────────────────────────
@@ -92,12 +95,15 @@ RULES:
 - QUESTION DESIGN (SCENARIO-BASED): For "application" and "analysis" questions, you MUST create a practical, real-world scenario or problem statement rather than asking direct theoretical questions.
 - DISTRACTOR DESIGN (CRITICAL): The 3 incorrect options (distractors) must NOT be obviously wrong. They MUST represent common student misconceptions, partial understandings, or logical errors based on the context.
 - Natural Vietnamese, domain-appropriate technical terms.
+- CHUẨN HÓA THUẬT NGỮ CHUYÊN NGÀNH: Giữ nguyên các thuật ngữ chuyên ngành CNTT và Scrum Guide bằng tiếng Anh như "Scrum Master", "Product Owner", "Sprint", "Increment", "Backlog", "User Story", v.v. Không được dịch gượng ép sang tiếng Việt (tránh dịch máy không tự nhiên). Sử dụng các thuật ngữ quen thuộc trong giáo trình đại học và Scrum Guide.
 - Option Explanations (CRITICAL): You MUST provide a detailed explanation for each of the four choices (A, B, C, D) in Vietnamese in the "explanations" object. Explain why the correct option is correct, and point out the specific logical flaw or error in understanding for each incorrect option. Do not genericize; be specific to each choice.
 - General Explanation: Provide a 1-2 sentence overall explanation in the "explanation" field (usually explaining why the correct answer is right) for backward compatibility.
 - Restudy Hint: Identify the specific section or concept name from the lesson that the student should review if they fail this question (e.g., "Mục 2.1: Cách hoạt động của RAM").
+- Topic Field (CRITICAL): Identify the exact heading text (e.g., "2.3.1 Thuật ngữ và Vai trò trong Scrum" or "2.3 Scrum Roles") from the LESSON CONTENT that this question belongs to. Output it in the "topic" field.
+- Chapter Field (CRITICAL): Identify which chapter or major heading (e.g., "Chương 2. Scrum Framework" or "Chương 1. Tổng quan") from the LESSON CONTENT this question belongs to. Output it in the "chapter" field.
 
 OUTPUT: Return ONLY valid JSON, no markdown, no extra text:
-{{"questions":[{{"type":"...","question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"correct_answer":"A","explanation":"...","explanations":{{"A":"...","B":"...","C":"...","D":"..."}},"restudy_hint":"..."}}]}}
+{{"questions":[{{"type":"...","chapter":"...","topic":"...","question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"correct_answer":"A","explanation":"...","explanations":{{"A":"...","B":"...","C":"...","D":"..."}},"restudy_hint":"..."}}]}}
 
 LESSON CONTENT:
 {content}
@@ -358,10 +364,168 @@ async def analyze_content(body: AnalyzeContentRequest):
             reasoning="Phân tích dựa trên độ dài (tính năng AI đang bận)."
         )
 
+def _normalize_heading_key(text: str) -> str:
+    if not text:
+        return ""
+    import unicodedata
+    text = text.lower()
+    normalized = unicodedata.normalize("NFD", text)
+    stripped = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+    stripped = stripped.replace("đ", "d").replace("Đ", "D")
+    stripped = re.sub(r'[^a-z0-9\s]', ' ', stripped)
+    return " ".join(stripped.split())
+
+
+def _extract_heading_number(text: str) -> str | None:
+    text_clean = text.strip()
+    # 1. Match "Chương 2", "Chuong 2", "Chapter 2", "Phần 1", "Phan A"
+    m = re.match(r'^(?:chương|chuong|chapter|phần|phan|part)\s+(\w+)', text_clean, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    # 2. Match standard section numbering like "2.3.1", "2.3"
+    m = re.match(r'^(\d+(?:\.\d+)*)', text_clean)
+    if m:
+        return m.group(1).rstrip('.')
+    return None
+
+
+def parse_heading_tree(markdown_text: str) -> dict:
+    tree = {}
+    header_pattern = re.compile(r'^(#{1,6})\s+(.*)$')
+    
+    # Step 1: Collect all headings and their heading numbers
+    headings = []
+    for line in markdown_text.splitlines():
+        line = line.strip()
+        match = header_pattern.match(line)
+        if match:
+            level = len(match.group(1))
+            heading_text = match.group(2).strip().rstrip('#').strip()
+            num_seq = _extract_heading_number(heading_text)
+            headings.append({
+                "raw_text": heading_text,
+                "level": level,
+                "num_seq": num_seq,
+                "norm_key": _normalize_heading_key(heading_text)
+            })
+            
+    # Map of heading numbers to their raw texts for hierarchy resolution
+    num_to_text = {}
+    for h in headings:
+        if h["num_seq"]:
+            num_to_text[h["num_seq"]] = h["raw_text"]
+            
+    # Step 2: Build parent/ancestors list for each heading
+    for i, h in enumerate(headings):
+        ancestors = []
+        
+        # Method A: Numeric sequence prefix match (extremely robust against random document orders)
+        if h["num_seq"]:
+            parts = h["num_seq"].split(".")
+            for length in range(1, len(parts)):
+                parent_seq = ".".join(parts[:length])
+                if parent_seq in num_to_text:
+                    ancestors.append(num_to_text[parent_seq])
+                    
+        # Method B: Text-level sequential fallback (for unnumbered headings)
+        if not ancestors:
+            temp_headers = {}
+            for prev_h in headings[:i]:
+                temp_headers[prev_h["level"]] = prev_h["raw_text"]
+                for l in list(temp_headers.keys()):
+                    if l > prev_h["level"]:
+                        del temp_headers[l]
+            ancestors = [temp_headers[l] for l in sorted(temp_headers.keys()) if l < h["level"]]
+            
+        tree[h["norm_key"]] = {
+            "raw_text": h["raw_text"],
+            "level": h["level"],
+            "ancestors": ancestors
+        }
+    return tree
+
+
+def is_chapter_heading(text: str) -> bool:
+    text_clean = text.strip()
+    if re.match(r'^(chương|chuong|chapter|phần|phan|part)\b', text_clean, re.IGNORECASE):
+        return True
+    if re.match(r'^\d+(\.|\s)\s*[^\d\.]', text_clean):
+        return True
+    if re.match(r'^\d+\s*$', text_clean):
+        return True
+    return False
+
+
+def find_closest_heading(raw_text: str, tree: dict) -> str | None:
+    if not tree:
+        return None
+    
+    norm_raw = _normalize_heading_key(raw_text)
+    if not norm_raw:
+        return None
+        
+    if norm_raw in tree:
+        return norm_raw
+        
+    best_key = None
+    best_score = 0.0
+    raw_words = set(norm_raw.split())
+    
+    for key in tree.keys():
+        if norm_raw in key or key in norm_raw:
+            key_words = set(key.split())
+            intersection = raw_words.intersection(key_words)
+            union = raw_words.union(key_words)
+            score = len(intersection) / len(union) if union else 0.0
+            score += 0.5
+            if score > best_score:
+                best_score = score
+                best_key = key
+                
+    if not best_key:
+        for key in tree.keys():
+            key_words = set(key.split())
+            intersection = raw_words.intersection(key_words)
+            union = raw_words.union(key_words)
+            score = len(intersection) / len(union) if union else 0.0
+            if score > best_score and score >= 0.2:
+                best_score = score
+                best_key = key
+                
+    return best_key
+
+
+def determine_chapter_topic(matched_key: str, tree: dict) -> tuple[str, str]:
+    node = tree[matched_key]
+    path = node["ancestors"] + [node["raw_text"]]
+    
+    chapter = None
+    for heading in path:
+        if is_chapter_heading(heading):
+            chapter = heading
+            break
+            
+    if not chapter:
+        chapter = path[0]
+        
+    topic = path[-1]
+    
+    if len(path) > 1 and chapter == topic:
+        chapter_candidates = [h for h in node["ancestors"] if is_chapter_heading(h)]
+        if chapter_candidates:
+            chapter = chapter_candidates[0]
+        else:
+            chapter = node["ancestors"][0]
+            
+    return chapter, topic
+
+
 @router.post("/generate-quiz", response_model=GenerateQuizResponse)
 async def generate_quiz(body: GenerateQuizRequest):
     """Generate diverse academic MCQ quiz using Gemini (non-blocking)."""
     seed = body.variation_seed if body.variation_seed is not None else int(time.time()) % 10000
+    
+    logger.info("[QUIZ_MAPPING] lesson_content length=%d, first 500 chars: %r", len(body.lesson_content), body.lesson_content[:500])
 
     try:
         raw_questions = await _call_llm(
@@ -374,6 +538,9 @@ async def generate_quiz(body: GenerateQuizRequest):
     except Exception as exc:
         logger.error("Quiz LLM failed (seed=%d): %s", seed, exc, exc_info=True)
         raise HTTPException(status_code=502, detail=MSG.quiz.llm_failed)
+
+    # Pre-parse heading tree from lesson content to mapping parent chapters
+    heading_tree = parse_heading_tree(body.lesson_content)
 
     questions: list[QuizQuestion] = []
     for raw in raw_questions:
@@ -393,6 +560,52 @@ async def generate_quiz(body: GenerateQuizRequest):
             val = raw_exps.get(choice) or raw_exps.get(choice.lower()) or raw["explanation"]
             exps[choice] = str(val).strip()
 
+        # Map chapter and topic using the heading tree
+        raw_chapter = str(raw.get("chapter") or "").strip()
+        raw_topic = str(raw.get("topic") or "").strip()
+        
+        chapter_mapped = raw_chapter
+        topic_mapped = raw_topic
+        
+        logger.info("[QUIZ_MAPPING] raw_chapter=%r, raw_topic=%r", raw_chapter, raw_topic)
+        logger.info("[QUIZ_MAPPING] heading_tree_keys=%r", list(heading_tree.keys()) if heading_tree else [])
+        
+        if heading_tree:
+            matched_key = None
+            if raw_topic:
+                matched_key = find_closest_heading(raw_topic, heading_tree)
+                logger.info("[QUIZ_MAPPING] matched_key by raw_topic=%r", matched_key)
+            if not matched_key and raw_chapter:
+                matched_key = find_closest_heading(raw_chapter, heading_tree)
+                logger.info("[QUIZ_MAPPING] matched_key by raw_chapter=%r", matched_key)
+                
+            if matched_key:
+                chapter_mapped, topic_mapped = determine_chapter_topic(matched_key, heading_tree)
+                logger.info("[QUIZ_MAPPING] chapter_mapped=%r, topic_mapped=%r from matched_key", chapter_mapped, topic_mapped)
+            else:
+                first_key = list(heading_tree.keys())[0] if heading_tree else None
+                if first_key:
+                    chapter_mapped, _ = determine_chapter_topic(first_key, heading_tree)
+                else:
+                    if not chapter_mapped:
+                        chapter_mapped = "Chương chung"
+                if not topic_mapped:
+                    topic_mapped = raw_topic if raw_topic else "Chung"
+        else:
+            if not chapter_mapped:
+                chapter_mapped = "Chương chung"
+            if not topic_mapped:
+                topic_mapped = raw_topic if raw_topic else "Chung"
+
+        # Determine difficulty based on Bloom Level (q_type)
+        difficulty_map = {
+            "knowledge": "Dễ",
+            "comprehension": "Trung bình",
+            "application": "Khó",
+            "analysis": "Nâng cao"
+        }
+        difficulty = difficulty_map.get(q_type, "Dễ")
+
         questions.append(QuizQuestion(
             id=f"q{len(questions) + 1}",
             question=raw["question"].strip(),
@@ -402,6 +615,9 @@ async def generate_quiz(body: GenerateQuizRequest):
             explanations=exps,
             restudy_hint=str(raw.get("restudy_hint", "")).strip(),
             type=q_type,
+            chapter=chapter_mapped,
+            topic=topic_mapped,
+            difficulty=difficulty
         ))
 
     if not questions:

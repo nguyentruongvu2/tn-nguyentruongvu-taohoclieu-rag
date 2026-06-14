@@ -33,6 +33,7 @@ from ..prompts.project_rag_user_prompts import (
     build_project_rag_combined_prompt,
     build_section_user_prompt,
     build_project_rag_batch_user_prompt,
+    build_section_edit_user_prompt,
 )
 from ..prompts.project_rag_section_profiles import (
     RETRIEVAL_MAP,

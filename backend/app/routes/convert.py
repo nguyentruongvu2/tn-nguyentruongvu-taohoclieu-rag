@@ -22,6 +22,21 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import pdfplumber
+
+# Patch pdfminer to handle missing 'N' key in ICCBased colorspaces (which throws KeyError: 'N')
+try:
+    import pdfminer.pdftypes
+    _orig_pdfstream_getitem = pdfminer.pdftypes.PDFStream.__getitem__
+    def _patched_pdfstream_getitem(self, name: str):
+        try:
+            return _orig_pdfstream_getitem(self, name)
+        except KeyError as e:
+            if name == "N":
+                return 3
+            raise e
+    pdfminer.pdftypes.PDFStream.__getitem__ = _patched_pdfstream_getitem
+except Exception as e:
+    logging.getLogger(__name__).warning("Failed to monkey patch pdfminer: %s", e)
 from docx import Document
 import concurrent.futures
 
@@ -1015,137 +1030,146 @@ def _extract_from_pdf_with_meta(
     
     try:
         pdf_file = io.BytesIO(file_content)
-        page_blocks: list[list[str]] = []
-        page_native_chars: list[int] = []
-        page_private_use_chars: list[int] = []
-        pages_with_native_content = 0
-        page_count = 0
-        native_text_chars = 0
-
         with pdfplumber.open(pdf_file) as pdf:
             page_count = len(pdf.pages)
 
-            for page_num, page in enumerate(pdf.pages, 1):
-                logger.debug(f"Extracting text from page {page_num}")
+        page_blocks: list[list[str]] = [[] for _ in range(page_count)]
+        page_native_chars: list[int] = [0 for _ in range(page_count)]
+        page_private_use_chars: list[int] = [0 for _ in range(page_count)]
+        pages_with_native_content = 0
+        native_text_chars = 0
 
-                # Explicit page marker helps downstream repeated header/footer detection.
-                current_block: list[str] = [f"## Page {page_num}/{page_count}"]
-                current_page_native_chars = 0
-                current_page_private_use_chars = 0
+        chunk_size = 30
+        for chunk_start in range(0, page_count, chunk_size):
+            chunk_end = min(chunk_start + chunk_size, page_count)
+            with pdfplumber.open(pdf_file) as pdf:
+                for page_idx in range(chunk_start, chunk_end):
+                    page_num = page_idx + 1
+                    page = pdf.pages[page_idx]
+                    logger.debug(f"Extracting text from page {page_num}")
 
-                custom_table_settings = {
-                    "vertical_strategy": "lines",
-                    "horizontal_strategy": "lines",
-                    "intersection_tolerance": 15,
-                    "join_tolerance": 15
-                }
-                
-                # Find tables with coordinates and sort them vertically (top-to-bottom)
-                tables_found = page.find_tables(table_settings=custom_table_settings)
-                if not tables_found:
-                    tables_found = page.find_tables()
-                
-                tables_found = sorted(tables_found, key=lambda t: t.bbox[1]) if tables_found else []
-                
-                y_current = 0
-                width = page.width
-                height = page.height
-                
-                # We collect segments as (type, content) tuples
-                segments = []
-                
-                for table_obj in tables_found:
-                    x0, y0, x1, y1 = table_obj.bbox
+                    # Explicit page marker helps downstream repeated header/footer detection.
+                    current_block: list[str] = [f"## Page {page_num}/{page_count}"]
+                    current_page_native_chars = 0
+                    current_page_private_use_chars = 0
+
+                    custom_table_settings = {
+                        "vertical_strategy": "lines",
+                        "horizontal_strategy": "lines",
+                        "intersection_tolerance": 15,
+                        "join_tolerance": 15
+                    }
                     
-                    # Extract text before this table
-                    if y0 > y_current:
-                        text_area = page.crop((0, y_current, width, y0))
+                    # Find tables with coordinates and sort them vertically (top-to-bottom)
+                    tables_found = page.find_tables(table_settings=custom_table_settings)
+                    if not tables_found:
+                        tables_found = page.find_tables()
+                    
+                    tables_found = sorted(tables_found, key=lambda t: t.bbox[1]) if tables_found else []
+                    
+                    # Account for non-zero page bounding box offsets (e.g. MediaBox/CropBox)
+                    px0, py0, px1, py1 = page.bbox
+                    y_current = py0
+                    
+                    # We collect segments as (type, content) tuples
+                    segments = []
+                    
+                    for table_obj in tables_found:
+                        tx0, ty0, tx1, ty1 = table_obj.bbox
+                        
+                        # Extract text before this table
+                        if ty0 > y_current + 0.01:
+                            text_area = page.crop((px0, y_current, px1, ty0), strict=False)
+                            txt = text_area.extract_text() or ""
+                            if txt.strip():
+                                segments.append(("text", txt.strip()))
+                        
+                        # Extract table data
+                        table_data = table_obj.extract()
+                        if table_data:
+                            segments.append(("table", table_data))
+                            
+                        y_current = ty1
+                    
+                    # Extract remaining text after the last table
+                    if y_current < py1 - 0.01:
+                        text_area = page.crop((px0, y_current, px1, py1), strict=False)
                         txt = text_area.extract_text() or ""
                         if txt.strip():
                             segments.append(("text", txt.strip()))
                     
-                    # Extract table data
-                    table_data = table_obj.extract()
-                    if table_data:
-                        segments.append(("table", table_data))
-                        
-                    y_current = y1
-                
-                # Extract remaining text after the last table
-                if y_current < height:
-                    text_area = page.crop((0, y_current, width, height))
-                    txt = text_area.extract_text() or ""
-                    if txt.strip():
-                        segments.append(("text", txt.strip()))
-                
-                table_row_signatures: set[str] = set()
-                
-                # Pass 1: Build signatures of all table rows to filter text duplicates
-                for seg_type, content in segments:
-                    if seg_type == "table":
-                        for row in content:
-                            if row:
-                                row_clean = [(cell or "").strip().replace("\n", " ") for cell in row]
-                                row_signature = _normalize_line_for_compare(" ".join(cell for cell in row_clean if cell))
-                                if row_signature:
-                                    table_row_signatures.add(row_signature)
-                
-                # Pass 2: Process segments in order and append to current_block
-                for seg_type, content in segments:
-                    if seg_type == "table":
-                        rows = [[(cell or "").strip().replace("\n", " ") for cell in row] for row in content if row]
-                        if not rows:
-                            continue
-                        header = rows[0]
-                        body = rows[1:] if len(rows) > 1 else []
-                        col_count = max(1, len(header))
-                        
-                        header_line = "| " + " | ".join(header) + " |"
-                        divider_line = "|" + "|".join(["---"] * col_count) + "|"
-                        current_block.append(header_line)
-                        current_block.append(divider_line)
-                        
-                        native_text_chars += len(header_line) + len(divider_line)
-                        current_page_native_chars += len(header_line) + len(divider_line)
-                        current_page_private_use_chars += _count_private_use_chars(header_line)
-                        current_page_private_use_chars += _count_private_use_chars(divider_line)
-                        
-                        for row in body:
-                            if len(row) < col_count:
-                                row = row + [""] * (col_count - len(row))
-                            current_row = row[:col_count]
-                            row_line = "| " + " | ".join(current_row) + " |"
-                            current_block.append(row_line)
-                            native_text_chars += len(row_line)
-                            current_page_native_chars += len(row_line)
-                            current_page_private_use_chars += _count_private_use_chars(row_line)
-                    else:
-                        # Process text segment
-                        text_lines = content.split('\n')
-                        filtered_lines = []
-                        for line in text_lines:
-                            stripped = line.strip()
-                            if stripped.count('|') >= 2:
+                    table_row_signatures: set[str] = set()
+                    
+                    # Pass 1: Build signatures of all table rows to filter text duplicates
+                    for seg_type, content in segments:
+                        if seg_type == "table":
+                            for row in content:
+                                if row:
+                                    row_clean = [(cell or "").strip().replace("\n", " ") for cell in row]
+                                    row_signature = _normalize_line_for_compare(" ".join(cell for cell in row_clean if cell))
+                                    if row_signature:
+                                        table_row_signatures.add(row_signature)
+                    
+                    # Pass 2: Process segments in order and append to current_block
+                    for seg_type, content in segments:
+                        if seg_type == "table":
+                            rows = [[(cell or "").strip().replace("\n", " ") for cell in row] for row in content if row]
+                            if not rows:
                                 continue
-                            normalized_line = _normalize_line_for_compare(stripped)
-                            if normalized_line and normalized_line in table_row_signatures:
-                                continue
-                            filtered_lines.append(line)
+                            header = rows[0]
+                            body = rows[1:] if len(rows) > 1 else []
+                            col_count = max(1, len(header))
                             
-                        filtered_text = '\n'.join(filtered_lines).strip()
-                        if filtered_text:
-                            if len(current_block) > 1 and current_block[-1] != "":
-                                current_block.append("")
-                            current_block.append(filtered_text)
-                            native_text_chars += len(filtered_text)
-                            current_page_native_chars += len(filtered_text)
-                            current_page_private_use_chars += _count_private_use_chars(filtered_text)
+                            header_line = "| " + " | ".join(header) + " |"
+                            divider_line = "|" + "|".join(["---"] * col_count) + "|"
+                            current_block.append(header_line)
+                            current_block.append(divider_line)
+                            
+                            native_text_chars += len(header_line) + len(divider_line)
+                            current_page_native_chars += len(header_line) + len(divider_line)
+                            current_page_private_use_chars += _count_private_use_chars(header_line)
+                            current_page_private_use_chars += _count_private_use_chars(divider_line)
+                            
+                            for row in body:
+                                if len(row) < col_count:
+                                    row = row + [""] * (col_count - len(row))
+                                current_row = row[:col_count]
+                                row_line = "| " + " | ".join(current_row) + " |"
+                                current_block.append(row_line)
+                                native_text_chars += len(row_line)
+                                current_page_native_chars += len(row_line)
+                                current_page_private_use_chars += _count_private_use_chars(row_line)
+                        else:
+                            # Process text segment
+                            text_lines = content.split('\n')
+                            filtered_lines = []
+                            for line in text_lines:
+                                stripped = line.strip()
+                                if stripped.count('|') >= 2:
+                                    continue
+                                normalized_line = _normalize_line_for_compare(stripped)
+                                if normalized_line and normalized_line in table_row_signatures:
+                                    continue
+                                filtered_lines.append(line)
+                                
+                            filtered_text = '\n'.join(filtered_lines).strip()
+                            if filtered_text:
+                                if len(current_block) > 1 and current_block[-1] != "":
+                                    current_block.append("")
+                                current_block.append(filtered_text)
+                                native_text_chars += len(filtered_text)
+                                current_page_native_chars += len(filtered_text)
+                                current_page_private_use_chars += _count_private_use_chars(filtered_text)
 
-                page_blocks.append(current_block)
-                page_native_chars.append(current_page_native_chars)
-                page_private_use_chars.append(current_page_private_use_chars)
-                if current_page_native_chars >= 35:
-                    pages_with_native_content += 1
+                    page_blocks[page_idx] = current_block
+                    page_native_chars[page_idx] = current_page_native_chars
+                    page_private_use_chars[page_idx] = current_page_private_use_chars
+                    if current_page_native_chars >= 35:
+                        pages_with_native_content += 1
+            
+            # Close file and force garbage collection of PDF page geometry caches to prevent OOM
+            import gc
+            gc.collect()
 
         # OCR fallback for image-based/scan PDFs.
         # auto: run OCR only on candidate pages (sparse/corrupted)
@@ -1160,9 +1184,10 @@ def _extract_from_pdf_with_meta(
             corrupted_symbol_threshold = max(3, page_count)
             has_corrupted_symbols = sum(page_private_use_chars) >= corrupted_symbol_threshold
             # Skip OCR for clearly text-native PDFs to keep conversion fast.
+            # Allow 90% or more pages to be native content to handle empty/cover pages.
             clearly_text_native = (
                 page_count > 0
-                and pages_with_native_content == page_count
+                and pages_with_native_content >= max(1, int(page_count * 0.90))
                 and native_text_chars >= max(35 * page_count, 60)
                 and not has_corrupted_symbols
             )
@@ -1396,8 +1421,10 @@ def _extract_page_ocr_best(image) -> tuple[str, Literal["good", "medium", "bad"]
     best_quality: Literal["good", "medium", "bad"] = "bad"
     any_ocr_used = False
 
+    first_run = True
     for variant in variants:
-        for region in _build_ocr_regions(variant):
+        regions = _build_ocr_regions(variant)
+        for region in regions:
             raw_text, avg_conf, paddle_used = _run_paddle_ocr_with_confidence(region)
             quality = _evaluate_ocr_quality(raw_text, avg_conf)
             any_ocr_used = any_ocr_used or paddle_used
@@ -1413,6 +1440,17 @@ def _extract_page_ocr_best(image) -> tuple[str, Literal["good", "medium", "bad"]
                         quality = fallback_quality
 
             cleaned = _post_process_ocr_text(raw_text)
+
+            if first_run:
+                first_run = False
+                # If the first run (base variant on full page) returns empty text,
+                # the page is blank or has no readable text. Exit immediately.
+                if not cleaned.strip():
+                    return "", "bad", any_ocr_used
+                # If confidence is high or quality is good/medium, return immediately.
+                if quality in ("good", "medium") or (avg_conf >= 0.70 and len(cleaned.strip()) > 0):
+                    return cleaned, quality, any_ocr_used
+
             score = _score_ocr_candidate(cleaned, avg_conf) + (_quality_rank(quality) * 8.0)
 
             if score > best_score:
@@ -1553,6 +1591,10 @@ def _build_ocr_regions(image):
         return regions
 
     if width < 200 or height < 200:
+        return regions
+
+    # Standard portrait page check. If height > width, do not perform slide crops.
+    if height > width:
         return regions
 
     # Many slide decks place text on center/right and illustrations on the left.

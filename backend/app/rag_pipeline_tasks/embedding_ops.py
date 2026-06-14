@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import re
-from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from google import genai
 from google.genai import types
@@ -47,6 +47,95 @@ def embed_document(pipeline: "RAGPipeline", text: str) -> List[float]:
             exc,
         )
         return local_embedding(text)
+
+
+def embed_documents(
+    pipeline: "RAGPipeline",
+    texts: List[str],
+    batch_size: int = 100,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+) -> List[List[float]]:
+    if not pipeline.gemini_api_key:
+        return [local_embedding(t) for t in texts]
+
+    embeddings: List[List[float]] = []
+    quota_exhausted = False
+
+    try:
+        client = genai.Client(api_key=pipeline.gemini_api_key)
+        total_texts = len(texts)
+        for i in range(0, total_texts, batch_size):
+            batch = texts[i : i + batch_size]
+            
+            if quota_exhausted:
+                embeddings.extend([local_embedding(t) for t in batch])
+                if progress_callback:
+                    try:
+                        progress_callback(len(embeddings), total_texts)
+                    except Exception as cb_exc:
+                        logger.warning("Progress callback failed during batch embedding: %s", cb_exc)
+                continue
+
+            try:
+                response = client.models.embed_content(
+                    model=pipeline.gemini_embedding_model,
+                    contents=batch,
+                    config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT")
+                )
+                if len(response.embeddings) == len(batch):
+                    embeddings.extend([emb.values for emb in response.embeddings])
+                else:
+                    raise ValueError(f"Embeddings length mismatch: expected {len(batch)}, got {len(response.embeddings)}")
+            except Exception as batch_exc:
+                batch_exc_str = str(batch_exc).lower()
+                is_quota = "429" in batch_exc_str or "quota" in batch_exc_str or "exhausted" in batch_exc_str or "limit" in batch_exc_str
+                logger.warning(
+                    "Gemini batch embedding failed for batch %s-%s. Quota exhausted: %s. Error: %s.",
+                    i,
+                    i + len(batch),
+                    is_quota,
+                    batch_exc,
+                )
+                
+                if is_quota:
+                    quota_exhausted = True
+                    embeddings.extend([local_embedding(t) for t in batch])
+                else:
+                    logger.info("Attempting individual fallback embedding for batch %s-%s.", i, i + len(batch))
+                    for text in batch:
+                        if quota_exhausted:
+                            embeddings.append(local_embedding(text))
+                        else:
+                            try:
+                                response = client.models.embed_content(
+                                    model=pipeline.gemini_embedding_model,
+                                    contents=text,
+                                    config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT")
+                                )
+                                embeddings.append(response.embeddings[0].values)
+                            except Exception as ind_exc:
+                                ind_exc_str = str(ind_exc).lower()
+                                is_ind_quota = "429" in ind_exc_str or "quota" in ind_exc_str or "exhausted" in ind_exc_str or "limit" in ind_exc_str
+                                if is_ind_quota:
+                                    quota_exhausted = True
+                                    logger.warning("Quota exhausted during individual fallback. Switching to local embeddings.")
+                                else:
+                                    logger.warning("Individual embedding failed: %s", ind_exc)
+                                embeddings.append(local_embedding(text))
+            
+            if progress_callback:
+                try:
+                    progress_callback(len(embeddings), total_texts)
+                except Exception as cb_exc:
+                    logger.warning("Progress callback failed during batch embedding: %s", cb_exc)
+    except Exception as exc:
+        logger.warning(
+            "Gemini embedding batch client initialization failed. Falling back to local embedding. Error: %s",
+            exc,
+        )
+        embeddings = [local_embedding(t) for t in texts]
+
+    return embeddings
 
 
 def embed_query(pipeline: "RAGPipeline", text: str) -> List[float]:
