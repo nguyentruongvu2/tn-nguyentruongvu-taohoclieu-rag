@@ -1119,9 +1119,37 @@ export default function TeachingMaterialEditor() {
   }, [activeSection, updateSection]);
 
   useEffect(() => {
-    setSuggestedPrompts({});
-    setShowPromptSuggestions(false);
-    setActiveSuggestTab("theory");
+    if (activeSectionId) {
+      const cached = localStorage.getItem(`rag.suggestions.${activeSectionId}`);
+      if (cached) {
+        try {
+          setSuggestedPrompts(JSON.parse(cached));
+          const wasOpen = localStorage.getItem(`rag.suggestions.open.${activeSectionId}`) === "true";
+          setShowPromptSuggestions(wasOpen);
+        } catch {
+          setSuggestedPrompts({});
+          setShowPromptSuggestions(false);
+        }
+      } else {
+        setSuggestedPrompts({});
+        setShowPromptSuggestions(false);
+      }
+      
+      const savedTab = localStorage.getItem(`rag.suggestions.tab.${activeSectionId}`) || "theory";
+      setActiveSuggestTab(savedTab);
+
+      // Scroll active section into view in sidebar
+      const activeEl = document.querySelector(`[data-section-id="${activeSectionId}"]`);
+      if (activeEl) {
+        setTimeout(() => {
+          activeEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }, 100);
+      }
+    } else {
+      setSuggestedPrompts({});
+      setShowPromptSuggestions(false);
+      setActiveSuggestTab("theory");
+    }
   }, [activeSectionId]);
 
   const handleSuggestPrompt = async (sectionId: string, _promptType: string = "theory") => {
@@ -1136,6 +1164,7 @@ export default function TeachingMaterialEditor() {
           promptsMap[item.type] = item.prompt;
         });
         setSuggestedPrompts(promptsMap);
+        localStorage.setItem(`rag.suggestions.${sectionId}`, JSON.stringify(promptsMap));
       } else {
         toastService.error("Không thể lấy gợi ý prompt.");
       }
@@ -1146,16 +1175,18 @@ export default function TeachingMaterialEditor() {
     }
   };
 
-
-
   const handleSelectSuggestTab = (tabId: string) => {
     setActiveSuggestTab(tabId);
+    if (activeSectionId) {
+      localStorage.setItem(`rag.suggestions.tab.${activeSectionId}`, tabId);
+    }
   };
 
   const handleToggleSuggestions = () => {
     if (!activeSectionId) return;
     const nextShow = !showPromptSuggestions;
     setShowPromptSuggestions(nextShow);
+    localStorage.setItem(`rag.suggestions.open.${activeSectionId}`, String(nextShow));
     if (nextShow && Object.keys(suggestedPrompts).length === 0) {
       handleSuggestPrompt(activeSectionId);
     }
@@ -2259,6 +2290,7 @@ export default function TeachingMaterialEditor() {
                 return (
                   <div
                     key={s.id}
+                    data-section-id={s.id}
                     draggable
                     onClick={() => setActiveSectionId(s.id)}
                     onDragStart={(event) => {

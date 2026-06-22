@@ -3,12 +3,11 @@
  *
  * Renders Markdown with support for:
  * 1. GitHub-style alert callouts  (> [!TIP], > [!NOTE], > [!WARNING], > [!IMPORTANT], > [!CAUTION])
- * 2. Mermaid.js diagrams          (```mermaid ... ```)
- * 3. Custom emoji callouts        (> 💡 **Mẹo…**, > 📝 **Lưu ý…**, > 🤔 **Thảo luận…**, > 🏫 **Nhận xét…**)
- * 4. All existing citation link logic (passed via `components` prop override)
+ * 2. Custom emoji callouts        (> 💡 **Mẹo…**, > 📝 **Lưu ý…**, > 🤔 **Thảo luận…**, > 🏫 **Nhận xét…**)
+ * 3. All existing citation link logic (passed via `components` prop override)
  */
 
-import React, { useEffect, useRef, useId } from "react";
+import React, { useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -172,18 +171,67 @@ function CalloutBlock({
 }
 
 // ---------------------------------------------------------------------------
-// Mermaid diagram component (lazy loads mermaid via CDN)
+// KaTeX and math global interface definitions
 // ---------------------------------------------------------------------------
 
 declare global {
   interface Window {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mermaid?: any;
-    _mermaidLoading?: boolean;
-    _mermaidReady?: boolean;
     renderMathInElement?: any;
     _katexLoading?: boolean;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Robust Loaders for Scripts and Styles (with multiple CDNs for redundancy)
+// ---------------------------------------------------------------------------
+
+function loadScriptWithFallbacks(urls: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let index = 0;
+    function tryNext() {
+      if (index >= urls.length) {
+        reject(new Error("All script CDNs failed to load"));
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = urls[index];
+      script.onload = () => resolve();
+      script.onerror = () => {
+        index++;
+        tryNext();
+      };
+      document.head.appendChild(script);
+    }
+    tryNext();
+  });
+}
+
+function loadStyleWithFallbacks(urls: string[], id: string): Promise<void> {
+  return new Promise((resolve) => {
+    if (document.getElementById(id)) {
+      resolve();
+      return;
+    }
+    let index = 0;
+    function tryNext() {
+      if (index >= urls.length) {
+        // Resolve anyway so we don't completely break the UI if CSS fails
+        resolve();
+        return;
+      }
+      const link = document.createElement("link");
+      link.id = id;
+      link.rel = "stylesheet";
+      link.href = urls[index];
+      link.onload = () => resolve();
+      link.onerror = () => {
+        index++;
+        tryNext();
+      };
+      document.head.appendChild(link);
+    }
+    tryNext();
+  });
 }
 
 function loadKaTeX(): Promise<void> {
@@ -192,13 +240,25 @@ function loadKaTeX(): Promise<void> {
       resolve();
       return;
     }
-    if (!document.getElementById("katex-css")) {
-      const link = document.createElement("link");
-      link.id = "katex-css";
-      link.rel = "stylesheet";
-      link.href = "https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css";
-      document.head.appendChild(link);
-    }
+
+    const cssCDNs = [
+      "https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css",
+      "https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css",
+      "https://unpkg.com/katex@0.16.8/dist/katex.min.css"
+    ];
+
+    const jsCDNs = [
+      "https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.js",
+      "https://unpkg.com/katex@0.16.8/dist/katex.min.js"
+    ];
+
+    const autoRenderCDNs = [
+      "https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/contrib/auto-render.min.js",
+      "https://unpkg.com/katex@0.16.8/dist/contrib/auto-render.min.js"
+    ];
+
     if (window._katexLoading) {
       const interval = setInterval(() => {
         if (window.renderMathInElement) {
@@ -210,98 +270,18 @@ function loadKaTeX(): Promise<void> {
     }
     window._katexLoading = true;
 
-    const script = document.createElement("script");
-    script.src = "https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js";
-    script.onload = () => {
-      const autoScript = document.createElement("script");
-      autoScript.src = "https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js";
-      autoScript.onload = () => {
+    loadStyleWithFallbacks(cssCDNs, "katex-css")
+      .then(() => loadScriptWithFallbacks(jsCDNs))
+      .then(() => loadScriptWithFallbacks(autoRenderCDNs))
+      .then(() => {
         window.renderMathInElement = (window as any).renderMathInElement;
         resolve();
-      };
-      autoScript.onerror = () => reject(new Error("Failed to load auto-render script"));
-      document.head.appendChild(autoScript);
-    };
-    script.onerror = () => reject(new Error("Failed to load KaTeX script"));
-    document.head.appendChild(script);
-  });
-}
-
-function loadMermaidCDN(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (window._mermaidReady) { resolve(); return; }
-    if (window._mermaidLoading) {
-      const interval = setInterval(() => {
-        if (window._mermaidReady) { clearInterval(interval); resolve(); }
-      }, 100);
-      return;
-    }
-    window._mermaidLoading = true;
-    const script = document.createElement("script");
-    script.src = "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js";
-    script.onload = () => {
-      window.mermaid?.initialize({ startOnLoad: false, theme: "neutral" });
-      window._mermaidReady = true;
-      window._mermaidLoading = false;
-      resolve();
-    };
-    script.onerror = () => reject(new Error("Failed to load Mermaid CDN"));
-    document.head.appendChild(script);
-  });
-}
-
-function MermaidDiagram({ code }: { code: string }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const uid = useId().replace(/:/g, "mermaid");
-
-  useEffect(() => {
-    let cancelled = false;
-    loadMermaidCDN()
-      .then(() => {
-        if (cancelled || !ref.current) return;
-        ref.current.innerHTML = "";
-        return window.mermaid?.render(`mermaid-${uid}`, code).then(
-          ({ svg }: { svg: string }) => {
-            if (!cancelled && ref.current) ref.current.innerHTML = svg;
-          }
-        );
       })
-      .catch(() => {
-        if (!cancelled && ref.current)
-          ref.current.innerHTML = `<pre style="font-size:12px;color:#666">${code}</pre>`;
+      .catch((err) => {
+        window._katexLoading = false;
+        reject(err);
       });
-    return () => { cancelled = true; };
-  }, [code, uid]);
-
-  return (
-    <div
-      style={{
-        background: "#f8fafc",
-        border: "1px solid #e2e8f0",
-        borderRadius: "8px",
-        padding: "16px",
-        margin: "16px 0",
-        overflowX: "auto",
-        textAlign: "center",
-      }}
-    >
-      <div
-        style={{
-          fontSize: "11px",
-          color: "#94a3b8",
-          marginBottom: "8px",
-          textAlign: "left",
-          fontWeight: 600,
-          letterSpacing: "0.05em",
-        }}
-      >
-        📊 SƠ ĐỒ
-      </div>
-      <div ref={ref}>
-        <div style={{ color: "#94a3b8", fontSize: "13px" }}>Đang tải sơ đồ…</div>
-      </div>
-    </div>
-  );
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -315,6 +295,16 @@ export function EnhancedMarkdownRenderer({
 }: EnhancedMarkdownRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Preprocess content to wrap placeholder URLs containing spaces in angle brackets < > so remark-parse compiles them as images
+  const processedContent = React.useMemo(() => {
+    if (!content) return "";
+    return content.replace(
+      /!\[([^\]]*)\]\(\s*(placeholder:[^)]*(?:\([^)]*\)[^)]*)*)\s*\)/g,
+      (_, alt, path) => `![${alt}](<${path.trim()}>)`
+    );
+  }, [content]);
+
+  // 1. Load KaTeX and render math when content changes
   useEffect(() => {
     loadKaTeX()
       .then(() => {
@@ -333,7 +323,22 @@ export function EnhancedMarkdownRenderer({
       .catch((err) => {
         console.error("Failed to render math with KaTeX:", err);
       });
-  }, [content]);
+  }, [processedContent]);
+
+  // 2. Re-apply math rendering on every component render/update to prevent React's virtual DOM reconciliation from resetting it to raw text
+  useEffect(() => {
+    if (containerRef.current && window.renderMathInElement) {
+      window.renderMathInElement(containerRef.current, {
+        delimiters: [
+          { left: "$$", right: "$$", display: true },
+          { left: "$", right: "$", display: false },
+          { left: "\\(", right: "\\)", display: false },
+          { left: "\\[", right: "\\]", display: true },
+        ],
+        throwOnError: false,
+      });
+    }
+  });
 
   const defaultComponents: Components = {
     // ── Blockquote → Callout ──────────────────────────────────────────────
@@ -361,15 +366,12 @@ export function EnhancedMarkdownRenderer({
       );
     },
 
-    // ── Code block → Mermaid or styled code ──────────────────────────────
+    // ── Code block → styled code ──────────────────────────────────────────
     code: ({ className: cls, children, ...props }) => {
       const isInline = !cls;
       const lang = (cls || "").replace("language-", "");
-      const codeStr = String(children).replace(/\n$/, "");
 
-      if (lang === "mermaid") {
-        return <MermaidDiagram code={codeStr} />;
-      }
+
 
       if (isInline) {
         return (
@@ -623,7 +625,7 @@ export function EnhancedMarkdownRenderer({
         components={defaultComponents}
         urlTransform={(uri) => uri}
       >
-        {content}
+        {processedContent}
       </ReactMarkdown>
     </div>
   );
