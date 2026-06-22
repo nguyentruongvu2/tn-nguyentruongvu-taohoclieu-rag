@@ -1526,6 +1526,8 @@ async def suggest_section_prompt_endpoint(
         "## Quy tắc xây dựng prompt & Tận dụng thế mạnh tài liệu\n"
         "- Prompt phải bám sát chương mục hiện tại.\n"
         "- Nếu đề mục liên quan đến Thực hành hoặc Bài tập (ví dụ chứa từ khóa 'thực hành', 'bài tập', 'lab', 'thảo luận thực hành'), prompt gợi ý cho mục 'Bài tập Củng cố' (exercise) và 'Ví dụ Minh họa' (example) BẮT BUỘC phải yêu cầu cấu trúc đầu ra gồm: 1. Câu hỏi, 2. Cách làm, 3. Kết quả mong đợi, 4. Mã nguồn Python đặt trong khối code block markdown.\n"
+        "- Nếu nhắc tới việc chèn ảnh hoặc sơ đồ minh họa, prompt gợi ý BẮT BUỘC phải yêu cầu AI chèn thẻ ảnh theo đúng cú pháp Markdown: `![Tên ảnh/sơ đồ](<placeholder: Mô tả chi tiết hình vẽ bằng tiếng Việt | Detailed English prompt for AI image generator>)`. KHÔNG ĐƯỢC sử dụng các cú pháp tự chế như `[IMAGE_PLACEHOLDER:...]` hay bất cứ định dạng nào khác.\n"
+        "- Chủ động đề xuất chèn ảnh/sơ đồ: Đối với các đề mục chứa nội dung cần trực quan hóa (như quy trình làm việc, kiến trúc hệ thống, sơ đồ khối phân loại, đồ thị phân phối thống kê hoặc biểu đồ phân tích tương quan), prompt gợi ý phải yêu cầu AI chèn thẻ ảnh placeholder đúng cú pháp tại vị trí phù hợp để nâng cao chất lượng bài giảng.\n"
         "- Sử dụng thế mạnh tài liệu:\n"
         "  + Với tài liệu 'Wes McKinney - Python for Data Analysis': ưu tiên các prompt hướng dẫn sử dụng thư viện pandas, numpy để chuẩn bị, xử lý và phân tích dữ liệu chuỗi thời gian.\n"
         "  + Với tài liệu 'José Unpingco - Python for Probability...': ưu tiên các prompt tích hợp công thức toán học thống kê và kiểm định, hồi quy bằng thư viện scipy.stats hoặc statsmodels.\n"
