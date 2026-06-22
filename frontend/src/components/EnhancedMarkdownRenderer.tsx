@@ -12,6 +12,7 @@ import React, { useEffect, useRef, useId } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { toastService } from "../services/toastService";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -480,6 +481,27 @@ export function EnhancedMarkdownRenderer({
       const isPlaceholder = src?.startsWith("placeholder:");
       if (src && isPlaceholder) {
         const description = src.substring("placeholder:".length).trim();
+        const decodedDescription = description.replace(/%7C/g, "|");
+        const parts = decodedDescription.split("|");
+        const rawVi = parts[0] || "";
+        const rawEn = parts[1] || rawVi;
+
+        const cleanVi = (() => {
+          try {
+            return decodeURIComponent(rawVi).replace(/_/g, " ");
+          } catch {
+            return rawVi.replace(/_/g, " ");
+          }
+        })();
+
+        const cleanEn = (() => {
+          try {
+            return decodeURIComponent(rawEn).replace(/_/g, " ");
+          } catch {
+            return rawEn.replace(/_/g, " ");
+          }
+        })();
+
         return (
           <div
             style={{
@@ -510,9 +532,10 @@ export function EnhancedMarkdownRenderer({
                 margin: "0 0 16px 0",
                 lineHeight: "1.5",
                 fontStyle: "italic",
+                wordBreak: "break-word",
               }}
             >
-              Mô tả gợi ý: {description}
+              Mô tả gợi ý: {cleanVi}
             </p>
             <div
               style={{
@@ -535,9 +558,9 @@ export function EnhancedMarkdownRenderer({
                   transition: "background 0.2s",
                 }}
                 onClick={() => {
-                  const promptForAi = `Vẽ ảnh minh họa cho bài giảng: ${alt}. Mô tả chi tiết: ${description}`;
+                  const promptForAi = `Vẽ ảnh minh họa cho bài giảng: ${alt}. Mô tả chi tiết: ${cleanEn}`;
                   navigator.clipboard.writeText(promptForAi);
-                  alert(`Đã copy prompt vẽ ảnh bằng AI vào bộ nhớ tạm:\n"${promptForAi}"\n\nBạn có thể dán vào công cụ tạo ảnh AI (ví dụ: Midjourney, DALL-E) để tạo ảnh.`);
+                  toastService.success("Đã copy prompt vẽ ảnh AI vào bộ nhớ tạm!");
                 }}
               >
                 🎨 Copy Prompt AI
@@ -577,11 +600,13 @@ export function EnhancedMarkdownRenderer({
           src={src}
           alt={alt}
           style={{
-            maxWidth: "100%",
+            maxWidth: "80%",
+            maxHeight: "320px",
+            objectFit: "contain",
             borderRadius: "8px",
             margin: "16px auto",
             display: "block",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
           }}
         />
       );
@@ -593,7 +618,13 @@ export function EnhancedMarkdownRenderer({
 
   return (
     <div ref={containerRef} className={className}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={defaultComponents}>{content}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={defaultComponents}
+        urlTransform={(uri) => uri}
+      >
+        {content}
+      </ReactMarkdown>
     </div>
   );
 }

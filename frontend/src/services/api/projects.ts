@@ -228,12 +228,9 @@ export const getSuggestedPrompt = async (
   projectId: string,
   sectionId: string,
   promptType?: string,
-): Promise<{ success: boolean; suggested_prompt: string }> => {
+): Promise<any> => {
   const url = `/projects/${encodeURIComponent(projectId)}/sections/${encodeURIComponent(sectionId)}/suggest-prompt` +
     (promptType ? `?prompt_type=${encodeURIComponent(promptType)}` : "");
-  const response = await apiClient.post<{
-    success: boolean;
-    suggested_prompt: string;
-  }>(url);
+  const response = await apiClient.post<any>(url);
   return response.data;
 };

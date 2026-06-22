@@ -118,9 +118,11 @@ const TOC_PROMPT_SUGGESTION = "Tạo dàn ý bài giảng chi tiết, bao quát 
 
 const SUGGEST_PROMPT_TYPES = [
   { id: "theory", label: "📖 Lý thuyết", name: "Lý thuyết" },
-  { id: "exercise", label: "📝 Bài tập", name: "Bài tập & Câu hỏi" },
-  { id: "example", label: "💡 Tình huống", name: "Tình huống & Ví dụ" },
-  { id: "discussion", label: "💬 Thảo luận", name: "Thảo luận nhóm" },
+  { id: "example", label: "💡 Ví dụ", name: "Ví dụ" },
+  { id: "exercise", label: "📝 Bài tập", name: "Bài tập" },
+  { id: "discussion", label: "💬 Thảo luận", name: "Thảo luận" },
+  { id: "case_study", label: "📂 Case Study", name: "Case Study" },
+  { id: "quiz", label: "❓ Trắc nghiệm", name: "Trắc nghiệm" },
 ];
 
 // The recommended workflow for generating a lecture
@@ -1106,22 +1108,51 @@ export default function TeachingMaterialEditor() {
   };
 
   useEffect(() => {
+    const handleReplacePlaceholder = (e: Event) => {
+      const customEvent = e as CustomEvent<{ placeholderSrc: string; newSrc: string }>;
+      const { placeholderSrc, newSrc } = customEvent.detail;
+      if (activeSection) {
+        let decodedSrc = placeholderSrc;
+        try {
+          decodedSrc = decodeURIComponent(placeholderSrc);
+        } catch {}
+
+        if (activeSection.content.includes(decodedSrc)) {
+          const updatedContent = activeSection.content.replace(decodedSrc, newSrc);
+          updateSection(activeSection.id, { content: updatedContent });
+          toastService.success("Đã thay thế placeholder bằng hình ảnh thành công!");
+        } else if (activeSection.content.includes(placeholderSrc)) {
+          const updatedContent = activeSection.content.replace(placeholderSrc, newSrc);
+          updateSection(activeSection.id, { content: updatedContent });
+          toastService.success("Đã thay thế placeholder bằng hình ảnh thành công!");
+        }
+      }
+    };
+
+    window.addEventListener("replace-placeholder", handleReplacePlaceholder);
+    return () => {
+      window.removeEventListener("replace-placeholder", handleReplacePlaceholder);
+    };
+  }, [activeSection, updateSection]);
+
+  useEffect(() => {
     setSuggestedPrompts({});
     setShowPromptSuggestions(false);
     setActiveSuggestTab("theory");
   }, [activeSectionId]);
 
-  const handleSuggestPrompt = async (sectionId: string, promptType: string = "theory") => {
+  const handleSuggestPrompt = async (sectionId: string, _promptType: string = "theory") => {
     if (!projectId || !sectionId) return;
     try {
       setSuggestingPromptId(sectionId);
       setError("");
-      const res = await getSuggestedPrompt(projectId, sectionId, promptType);
-      if (res.success && res.suggested_prompt) {
-        setSuggestedPrompts((prev) => ({
-          ...prev,
-          [promptType]: res.suggested_prompt,
-        }));
+      const res = await getSuggestedPrompt(projectId, sectionId);
+      if (res.success && res.data && res.data.suggestions) {
+        const promptsMap: Record<string, string> = {};
+        res.data.suggestions.forEach((item: any) => {
+          promptsMap[item.type] = item.prompt;
+        });
+        setSuggestedPrompts(promptsMap);
       } else {
         toastService.error("Không thể lấy gợi ý prompt.");
       }
@@ -1140,7 +1171,11 @@ export default function TeachingMaterialEditor() {
 
   const handleToggleSuggestions = () => {
     if (!activeSectionId) return;
-    setShowPromptSuggestions(!showPromptSuggestions);
+    const nextShow = !showPromptSuggestions;
+    setShowPromptSuggestions(nextShow);
+    if (nextShow && Object.keys(suggestedPrompts).length === 0) {
+      handleSuggestPrompt(activeSectionId);
+    }
   };
 
   const hasGeneratedContent = (section: Section): boolean => {
@@ -2575,7 +2610,7 @@ export default function TeachingMaterialEditor() {
                           {suggestingPromptId === activeSection.id ? (
                             <div className="flex items-center justify-center gap-1.5 py-3 text-cyan-600 font-medium">
                               <Loader2 size={14} className="animate-spin" />
-                              <span>Đang sinh prompt {SUGGEST_PROMPT_TYPES.find(t => t.id === activeSuggestTab)?.name}...</span>
+                              <span>Đang sinh các gợi ý prompt từ tài liệu...</span>
                             </div>
                           ) : suggestedPrompts[activeSuggestTab] ? (
                             <>
@@ -2631,7 +2666,7 @@ export default function TeachingMaterialEditor() {
                 {/* Markdown Editor */}
                 <div className="flex-1 flex flex-col md:flex-row overflow-hidden w-full">
                   {/* Textarea */}
-                  <div className="flex-1 flex flex-col h-full bg-slate-50/50 relative">
+                  <div className="w-full md:w-[42%] flex flex-col h-full bg-slate-50/50 relative shrink-0">
                     <div className="h-10 bg-slate-50 flex items-center px-6 border-b border-slate-100 text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0">
                       Markdown
                     </div>
