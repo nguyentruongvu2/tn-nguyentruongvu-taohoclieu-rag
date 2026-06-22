@@ -125,16 +125,6 @@ const SUGGEST_PROMPT_TYPES = [
   { id: "quiz", label: "❓ Trắc nghiệm", name: "Trắc nghiệm" },
 ];
 
-// The recommended workflow for generating a lecture
-const GENERATION_FLOW_STEPS = [
-  { key: "tieu de",     label: "1. Tiêu đề",      keywords: ["tieu de", "lesson title", "title", "chu de"] },
-  { key: "muc tieu",   label: "2. Mục tiêu",     keywords: ["muc tieu", "objective", "learning objective"] },
-  { key: "gioi thieu", label: "3. Giới thiệu",  keywords: ["gioi thieu", "overview", "mo dau", "dan nhap"] },
-  { key: "noi dung",   label: "4. Nội dung",     keywords: ["noi dung chinh", "main content", "key concept"] },
-  { key: "vi du",      label: "5. Ví dụ",        keywords: ["vi du", "example", "minh hoa", "ung dung"] },
-  { key: "tom tat",    label: "6. Tóm tắt",     keywords: ["tom tat", "tong ket", "summary", "ket luan"] },
-  { key: "cau hoi",    label: "7. Câu hỏi",     keywords: ["cau hoi", "on tap", "quiz", "trac nghiem", "bai tap"] },
-];
 
 
 function getSectionOrderWarning(
@@ -693,8 +683,7 @@ export default function TeachingMaterialEditor() {
   const [projectTitle, setProjectTitle] = useState("Dự án bài giảng");
   const [outlinePrompt, setOutlinePrompt] = useState("");
   const [isGeneratingOutline, setIsGeneratingOutline] = useState(false);
-  const [showOutlinePromptSuggestionHint, setShowOutlinePromptSuggestionHint] =
-    useState(true);
+
   const [showCitationsInPreview, setShowCitationsInPreview] = useState(true);
 
 
@@ -1001,12 +990,6 @@ export default function TeachingMaterialEditor() {
     );
   }, [projectId, activeSectionId]);
 
-
-  useEffect(() => {
-    if ((outlinePrompt || "").trim()) {
-      setShowOutlinePromptSuggestionHint(false);
-    }
-  }, [outlinePrompt]);
 
   useEffect(() => {
     if (promptInputRef.current) {
@@ -1523,7 +1506,6 @@ export default function TeachingMaterialEditor() {
   const handleGenerateOutline = async () => {
     if (!projectId) return;
     if (!outlinePrompt.trim()) {
-      setShowOutlinePromptSuggestionHint(true);
       setError(
         `Vui lòng nhập prompt để sinh mục lục. Gợi ý: ${TOC_PROMPT_SUGGESTION}`,
       );
@@ -1957,7 +1939,7 @@ export default function TeachingMaterialEditor() {
 
       {/* 2. Content Area */}
       {!isOutlineApproved ? (
-        <div className="flex-1 overflow-y-auto p-8 bg-slate-50/50 flex items-center justify-center relative">
+        <div className="flex-1 overflow-y-auto p-8 bg-slate-50/50 flex items-start justify-center relative">
           {loading && (
             <div className="absolute inset-0 bg-white/80 flex items-center justify-center z-20">
               <div className="w-full max-w-md space-y-4 animate-pulse p-6">
@@ -1984,29 +1966,6 @@ export default function TeachingMaterialEditor() {
                 Nhập yêu cầu tổng quan về bài giảng rồi bấm <strong className="text-blue-600 font-semibold">Sinh mục lục</strong> để AI tự động xây dựng cấu trúc bài học hoàn chỉnh.
               </p>
 
-              {/* Workflow Guide */}
-              <div className="mb-6 bg-blue-50/50 border border-blue-100/60 rounded-2xl p-5">
-                <p className="text-xs font-bold text-blue-800 mb-3 uppercase tracking-wider flex items-center gap-1.5">
-                  <Sparkles size={14} className="text-blue-600" />
-                  <span>📍 Quy trình soạn thảo chuẩn AI</span>
-                </p>
-                <div className="flex flex-wrap gap-2.5">
-                  {GENERATION_FLOW_STEPS.map((step, idx) => (
-                    <div key={step.key} className="flex items-center gap-1.5">
-                      <span className="text-xs bg-white border border-blue-100 text-blue-700 rounded-full px-3 py-1 font-medium shadow-sm">
-                        {step.label}
-                      </span>
-                      {idx < GENERATION_FLOW_STEPS.length - 1 && (
-                        <span className="text-blue-300 font-bold">›</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <p className="text-[11px] text-blue-500/80 mt-3 leading-relaxed">
-                  💡 <strong>Mẹo:</strong> Sinh nội dung theo thứ tự đề xuất giúp mô hình duy trì tính nhất quán xuyên suốt bài học tốt hơn.
-                </p>
-              </div>
-
                <textarea
                 ref={outlinePromptRef}
                 value={outlinePrompt}
@@ -2015,32 +1974,9 @@ export default function TeachingMaterialEditor() {
                   e.target.style.height = "auto";
                   e.target.style.height = `${e.target.scrollHeight}px`;
                 }}
-                onKeyDown={(e) => {
-                  if (
-                    e.key === "Tab" &&
-                    !e.shiftKey &&
-                    !(outlinePrompt || "").trim()
-                  ) {
-                    e.preventDefault();
-                    setOutlinePrompt(TOC_PROMPT_SUGGESTION);
-                    setShowOutlinePromptSuggestionHint(false);
-                    setTimeout(() => {
-                      if (outlinePromptRef.current) {
-                        outlinePromptRef.current.style.height = "auto";
-                        outlinePromptRef.current.style.height = `${outlinePromptRef.current.scrollHeight}px`;
-                      }
-                    }, 0);
-                  }
-                }}
                 className="w-full border border-slate-200/85 rounded-xl p-4 min-h-[85px] max-h-[300px] overflow-y-auto resize-none text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all duration-200 shadow-inner bg-slate-50/50 focus:bg-white text-sm"
                 placeholder={TOC_PROMPT_SUGGESTION}
               />
-              {showOutlinePromptSuggestionHint &&
-                !(outlinePrompt || "").trim() && (
-                  <p className="mt-2.5 text-xs text-blue-600 font-medium">
-                    ⌨️ Nhấn Tab để điền nhanh prompt gợi ý rồi bấm Sinh mục lục.
-                  </p>
-                )}
               <div className="mt-5 flex justify-end">
                 <button
                   onClick={handleGenerateOutline}
