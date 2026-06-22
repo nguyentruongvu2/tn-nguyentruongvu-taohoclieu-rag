@@ -1453,20 +1453,50 @@ async def suggest_section_prompt_endpoint(
     docs_owned = list_documents(current_user["id"], current_user["role"])
     source_docs = [d for d in docs_owned if str(d.get("id")) in {str(sid) for sid in source_ids}]
 
-    # Define standard fallbacks based on prompt_type
-    if prompt_type == "exercise":
-        fallback_prompt = f"Dựa trên tài liệu tham khảo, hãy tạo các bài tập ôn tập, câu hỏi củng cố kèm đáp án và giải thích chi tiết cho mục {section_title}."
-    elif prompt_type == "example":
-        fallback_prompt = f"Dựa trên tài liệu tham khảo, hãy xây dựng ví dụ minh họa và tình huống thực tế (case study) cho mục {section_title}."
-    elif prompt_type == "discussion":
-        fallback_prompt = f"Dựa trên tài liệu tham khảo, hãy gợi ý các chủ đề thảo luận nhóm và câu hỏi mở phản biện về mục {section_title}."
-    else:
-        fallback_prompt = f"Dựa trên tài liệu tham khảo, hãy giải thích chi tiết khái niệm {section_title}."
+    # Define standard fallback suggestions
+    fallback_suggestions = [
+        {
+            "type": "theory",
+            "title": "Soạn bài giảng Lý thuyết",
+            "prompt": f"Dựa trên tài liệu tham khảo, hãy giải thích chi tiết các khái niệm lý thuyết cốt lõi của mục: {section_title}."
+        },
+        {
+            "type": "example",
+            "title": "Xây dựng Ví dụ Minh họa",
+            "prompt": f"Dựa trên tài liệu tham khảo, hãy thiết kế các ví dụ minh họa trực quan, tình huống thực tiễn sinh động để làm rõ kiến thức trong mục: {section_title}."
+        },
+        {
+            "type": "exercise",
+            "title": "Thiết kế Bài tập Củng cố",
+            "prompt": f"Dựa trên tài liệu tham khảo, hãy tạo các bài tập ôn tập lý thuyết hoặc thực hành kèm lời giải chi tiết cho mục: {section_title}."
+        },
+        {
+            "type": "discussion",
+            "title": "Gợi ý Câu hỏi Thảo luận",
+            "prompt": f"Dựa trên tài liệu tham khảo, hãy đề xuất các câu hỏi mở, chủ đề thảo luận nhóm phản biện kích thích tư duy cho mục: {section_title}."
+        },
+        {
+            "type": "case_study",
+            "title": "Xây dựng Nghiên cứu Tình huống",
+            "prompt": f"Dựa trên tài liệu tham khảo, hãy thiết kế một case study thực tế chi tiết về chủ đề {section_title} để học viên phân tích."
+        },
+        {
+            "type": "quiz",
+            "title": "Sinh Câu hỏi Trắc nghiệm",
+            "prompt": f"Dựa trên tài liệu tham khảo, hãy tạo 5 câu hỏi trắc nghiệm khách quan đa lựa chọn (Multiple Choice Questions) kèm đáp án giải thích cho mục: {section_title}."
+        }
+    ]
+
+    fallback_payload = {
+        "topic": section_title,
+        "keywords": [],
+        "suggestions": fallback_suggestions
+    }
 
     if not source_docs:
         return {
             "success": True,
-            "suggested_prompt": fallback_prompt
+            "data": fallback_payload
         }
 
     retrieved = await asyncio.to_thread(
@@ -1480,89 +1510,74 @@ async def suggest_section_prompt_endpoint(
     if not context_text:
         return {
             "success": True,
-            "suggested_prompt": fallback_prompt
+            "data": fallback_payload
         }
 
-    # 2. Call LLM to suggest a highly detailed prompt based on prompt_type
-    if prompt_type == "exercise":
-        task_desc = (
-            "Nhiệm vụ của bạn là tạo ra một gợi ý câu lệnh (prompt) viết bằng tiếng Việt ngắn gọn, chuẩn xác, "
-            "giúp giáo viên yêu cầu AI tạo ra các bài tập củng cố, câu hỏi ôn tập (trắc nghiệm hoặc tự luận) kèm lời giải chi tiết cho đề mục bài giảng hiện tại.\n"
-        )
-        guidelines = (
-            "1. Dựa sát vào thông tin và ngữ cảnh từ tài liệu nguồn (đã được trích xuất trong phần Context).\n"
-            "2. Trong prompt gợi ý, hãy khuyên giáo viên yêu cầu cụ thể về:\n"
-            "   - Số lượng bài tập hoặc câu hỏi ôn tập mong muốn (ví dụ: 3 đến 5 câu).\n"
-            "   - Các nội dung trọng tâm trong phần này cần kiểm tra kiến thức.\n"
-            "   - Yêu cầu cung cấp đáp án chi tiết và giải thích cụ thể cho từng câu hỏi.\n"
-            "   - Số trang tham khảo cụ thể (hãy tìm số trang từ tài liệu nguồn xuất hiện trong Context và ghi vào prompt gợi ý, ví dụ: 'Dựa vào tài liệu tham khảo trang 11-29...').\n"
-        )
-        example_prompt = (
-            "Hãy viết một prompt gợi ý súc tích, tương tự như ví dụ sau:\n"
-            "\"Dựa vào tài liệu tham khảo (trang 11-29), hãy tạo 3 câu hỏi ôn tập (bao gồm 2 câu trắc nghiệm và 1 câu tự luận) kèm đáp án và giải thích chi tiết cho phần Công nghệ phần mềm hướng dự án. Các câu hỏi tập trung vào: Định nghĩa, Đặc điểm nổi bật, và Quy trình cơ bản.\""
-        )
-    elif prompt_type == "example":
-        task_desc = (
-            "Nhiệm vụ của bạn là tạo ra một gợi ý câu lệnh (prompt) viết bằng tiếng Việt ngắn gọn, chuẩn xác, "
-            "giúp giáo viên yêu cầu AI xây dựng các ví dụ minh họa trực quan hoặc một tình huống thực tế (case study) sinh động cho đề mục bài giảng hiện tại.\n"
-        )
-        guidelines = (
-            "1. Dựa sát vào thông tin và ngữ cảnh từ tài liệu nguồn (đã được trích xuất trong phần Context).\n"
-            "2. Trong prompt gợi ý, hãy khuyên giáo viên yêu cầu cụ thể về:\n"
-            "   - Đưa ra một ví dụ thực tế hoặc tình huống (case study) áp dụng khái niệm này vào thực tế.\n"
-            "   - Cách phân tích hoặc giải quyết vấn đề của ví dụ đó.\n"
-            "   - Bài học kinh nghiệm hoặc câu hỏi phân tích từ tình huống.\n"
-            "   - Số trang tham khảo cụ thể (hãy tìm số trang từ tài liệu nguồn xuất hiện trong Context và ghi vào prompt gợi ý, ví dụ: 'Dựa vào tài liệu tham khảo trang 11-29...').\n"
-        )
-        example_prompt = (
-            "Hãy viết một prompt gợi ý súc tích, tương tự như ví dụ sau:\n"
-            "\"Dựa vào tài liệu tham khảo (trang 11-29), hãy xây dựng một tình huống thực tế (case study) về một dự án phần mềm bị thất bại do không áp dụng đúng mô hình quy trình. Phân tích nguyên nhân và bài học rút ra liên quan đến Agile. Trình bày ngắn gọn trong khoảng 200-250 từ.\""
-        )
-    elif prompt_type == "discussion":
-        task_desc = (
-            "Nhiệm vụ của bạn là tạo ra một gợi ý câu lệnh (prompt) viết bằng tiếng Việt ngắn gọn, chuẩn xác, "
-            "giúp giáo viên yêu cầu AI đề xuất các chủ đề thảo luận nhóm, câu hỏi mở mang tính tranh biện hoặc câu hỏi suy luận sâu cho đề mục bài giảng hiện tại.\n"
-        )
-        guidelines = (
-            "1. Dựa sát vào thông tin và ngữ cảnh từ tài liệu nguồn (đã được trích xuất trong phần Context).\n"
-            "2. Trong prompt gợi ý, hãy khuyên giáo viên yêu cầu cụ thể về:\n"
-            "   - Các câu hỏi khêu gợi tư duy phản biện (critical thinking) của sinh viên.\n"
-            "   - Đề tài thảo luận nhóm hoặc hoạt động tương tác nhỏ trên lớp.\n"
-            "   - Định hướng trả lời hoặc tiêu chí chấm điểm gợi ý.\n"
-            "   - Số trang tham khảo cụ thể (hãy tìm số trang từ tài liệu nguồn xuất hiện trong Context và ghi vào prompt gợi ý, ví dụ: 'Dựa vào tài liệu tham khảo trang 11-29...').\n"
-        )
-        example_prompt = (
-            "Hãy viết một prompt gợi ý súc tích, tương tự như ví dụ sau:\n"
-            "\"Dựa vào tài liệu tham khảo (trang 11-29), hãy đề xuất 2 câu hỏi thảo luận nhóm mang tính phản biện về ưu và nhược điểm của việc áp dụng mô hình Agile trong dự án lớn. Gợi ý hướng trả lời và tiêu chí đánh giá cho giáo viên.\""
-        )
-    else:  # "theory"
-        task_desc = (
-            "Nhiệm vụ của bạn là tạo ra một gợi ý câu lệnh (prompt) viết bằng tiếng Việt ngắn gọn, chuẩn xác, giúp giáo viên yêu cầu AI viết nội dung lý thuyết chi tiết cho đề mục bài giảng hiện tại.\n"
-        )
-        guidelines = (
-            "1. Dựa sát vào thông tin và ngữ cảnh từ tài liệu nguồn (đã được trích xuất trong phần Context).\n"
-            "2. Trong prompt gợi ý, hãy khuyên giáo viên yêu cầu cụ thể về:\n"
-            "   - Các khái niệm cốt lõi cần trình bày.\n"
-            "   - Số trang tham khảo cụ thể (hãy tìm số trang từ tài liệu nguồn xuất hiện trong Context và ghi vào prompt gợi ý, ví dụ: 'Dựa vào tài liệu tham khảo trang 11-29...').\n"
-            "   - Cấu trúc trình bày mong muốn (ví dụ: định nghĩa ngắn gọn, giải thích đặc điểm dưới dạng các gạch đầu dòng).\n"
-        )
-        example_prompt = (
-            "Hãy viết một prompt gợi ý súc tích, tương tự như ví dụ sau:\n"
-            "\"Dựa vào tài liệu tham khảo (trang 11-29), hãy trình bày chi tiết về Công nghệ phần mềm hướng dự án. Nội dung cần làm rõ dưới dạng gạch đầu dòng: 1. Định nghĩa, 2. Đặc điểm nổi bật (phát triển phần mềm tùy chỉnh cho một khách hàng theo hợp đồng), 3. Quy trình cơ bản khi bắt đầu dự án. Trình bày ngắn gọn trong khoảng 150-200 từ.\""
-        )
-
+    # 2. Call LLM to suggest highly detailed prompts for all types
     suggest_prompt_system = (
-        "Bạn là một chuyên gia thiết kế và gợi ý câu lệnh (prompt engineering) cho bài giảng học thuật.\n"
-        f"{task_desc}"
-        f"Đề mục hiện tại: '{section_title}'\n\n"
-        "HƯỚNG DẪN TẠO PROMPT:\n"
-        f"{guidelines}"
-        "3. RÀNG BUỘC ĐỘ DÀI (QUAN TRỌNG): Chỉ trả về một prompt cực kỳ súc tích có độ dài khoảng 3 đến 4 dòng (khoảng 80-120 từ). Tích hợp ngay số trang tham khảo và các ý chính (tối đa 3 gạch đầu dòng ngắn). Không viết đoạn văn quá dài dòng.\n"
-        "4. Trả về định dạng text sạch. Không kèm lời giải thích hay markdown code blocks.\n"
-        f"{example_prompt}"
+        "Bạn là chuyên gia thiết kế học liệu và Prompt Engineering cho hệ thống hỗ trợ tạo tài liệu giảng dạy dựa trên Retrieval-Augmented Generation (RAG).\n"
+        "Nhiệm vụ của bạn là tự động tạo các prompt chất lượng cao nhằm hỗ trợ giảng viên khai thác hiệu quả mô hình ngôn ngữ lớn.\n\n"
+        "## Ngữ cảnh đầu vào\n"
+        f"- Tên học phần: {project.get('title')}\n"
+        f"- Đề mục/Chương hiện tại: {section_title}\n"
+        "- Các đoạn tri thức được truy xuất từ RAG (đã được trích xuất trong phần Context)\n\n"
+        "## Mục tiêu\n"
+        "KHÔNG sinh nội dung bài giảng. CHỈ sinh các prompt gợi ý để giảng viên có thể sử dụng hoặc chỉnh sửa trước khi gửi tới hệ thống AI.\n\n"
+        "## Quy tắc xây dựng prompt & Tận dụng thế mạnh tài liệu\n"
+        "- Prompt phải bám sát chương mục hiện tại.\n"
+        "- Nếu đề mục liên quan đến Thực hành hoặc Bài tập (ví dụ chứa từ khóa 'thực hành', 'bài tập', 'lab', 'thảo luận thực hành'), prompt gợi ý cho mục 'Bài tập Củng cố' (exercise) và 'Ví dụ Minh họa' (example) BẮT BUỘC phải yêu cầu cấu trúc đầu ra gồm: 1. Câu hỏi, 2. Cách làm, 3. Kết quả mong đợi, 4. Mã nguồn Python đặt trong khối code block markdown.\n"
+        "- Sử dụng thế mạnh tài liệu:\n"
+        "  + Với tài liệu 'Wes McKinney - Python for Data Analysis': ưu tiên các prompt hướng dẫn sử dụng thư viện pandas, numpy để chuẩn bị, xử lý và phân tích dữ liệu chuỗi thời gian.\n"
+        "  + Với tài liệu 'José Unpingco - Python for Probability...': ưu tiên các prompt tích hợp công thức toán học thống kê và kiểm định, hồi quy bằng thư viện scipy.stats hoặc statsmodels.\n"
+        "  + Với tài liệu 'Statistics-from-A-to-Z': ưu tiên các prompt giải thích trực quan, trực diện các khái niệm dễ gây nhầm lẫn (như p-value, standard error, ANOVA, sai lầm loại I/II) mà không lạm dụng toán phức tạp.\n"
+        "  + Nếu tài liệu tiếng Việt có chất lượng OCR kém hoặc ít chữ, hãy thiết kế prompt hướng dẫn AI sử dụng các tài liệu tiếng Anh để sinh nội dung chuyên môn chất lượng nhưng trình bày bằng tiếng Việt học thuật chuẩn theo đề cương.\n"
+        "- Sử dụng các thuật ngữ chuyên ngành được phát hiện từ tài liệu, chỉ sử dụng những thuật ngữ thực sự liên quan.\n"
+        "- Prompt phải có mục tiêu rõ ràng và đủ chi tiết để tạo ra kết quả chất lượng cao.\n"
+        "- Không tạo prompt chung chung. Không sử dụng mẫu cố định cho mọi chương.\n\n"
+        "## Yêu cầu đầu ra\n"
+        "Bạn BẮT BUỘC phải trả về định dạng JSON thuần túy (không kèm các block ```json) theo đúng cấu trúc sau:\n"
+        "{\n"
+        "  \"topic\": \"Tên chủ đề\",\n"
+        "  \"keywords\": [\"Từ khóa 1\", \"Từ khóa 2\", \"Từ khóa 3\"],\n"
+        "  \"suggestions\": [\n"
+        "    {\n"
+        "      \"type\": \"theory\",\n"
+        "      \"title\": \"Soạn bài giảng Lý thuyết\",\n"
+        "      \"prompt\": \"Prompt chi tiết giúp sinh bài giảng lý thuyết bám sát tài liệu\"\n"
+        "    },\n"
+        "    {\n"
+        "      \"type\": \"example\",\n"
+        "      \"title\": \"Xây dựng Ví dụ Minh họa\",\n"
+        "      \"prompt\": \"Prompt chi tiết giúp sinh ví dụ thực tế minh họa sinh động\"\n"
+        "    },\n"
+        "    {\n"
+        "      \"type\": \"exercise\",\n"
+        "      \"title\": \"Thiết kế Bài tập Củng cố\",\n"
+        "      \"prompt\": \"Prompt chi tiết giúp sinh các bài tập và đáp án\"\n"
+        "    },\n"
+        "    {\n"
+        "      \"type\": \"discussion\",\n"
+        "      \"title\": \"Gợi ý Câu hỏi Thảo luận\",\n"
+        "      \"prompt\": \"Prompt chi tiết giúp tạo câu hỏi thảo luận nhóm\"\n"
+        "    },\n"
+        "    {\n"
+        "      \"type\": \"case_study\",\n"
+        "      \"title\": \"Xây dựng Nghiên cứu Tình huống\",\n"
+        "      \"prompt\": \"Prompt chi tiết giúp sinh case study thực tiễn áp dụng lý thuyết\"\n"
+        "    },\n"
+        "    {\n"
+        "      \"type\": \"quiz\",\n"
+        "      \"title\": \"Sinh Câu hỏi Trắc nghiệm\",\n"
+        "      \"prompt\": \"Prompt chi tiết giúp sinh các câu hỏi trắc nghiệm kiểm tra kiến thức\"\n"
+        "    }\n"
+        "  ]\n"
+        "}"
     )
 
-    user_prompt = f"Context từ tài liệu nguồn:\n{context_text[:8000]}\n\nHãy tạo prompt gợi ý chi tiết nhất để soạn thảo nội dung cho mục '{section_title}'."
+    user_prompt = (
+        f"Context từ tài liệu nguồn:\n{context_text[:8000]}\n\n"
+        f"Hãy tạo danh sách prompt gợi ý và từ khóa chuyên ngành cho đề mục '{section_title}'."
+    )
 
     try:
         suggested_raw, _ = await asyncio.to_thread(
@@ -1570,13 +1585,27 @@ async def suggest_section_prompt_endpoint(
             context_text,
             f"{suggest_prompt_system}\n\n{user_prompt}"
         )
-        suggested_prompt = (suggested_raw or "").strip().strip('"').strip("'").strip()
+        import json
+        clean_json = (suggested_raw or "").strip()
+        if clean_json.startswith("```"):
+            lines = clean_json.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines[-1].startswith("```"):
+                lines = lines[:-1]
+            clean_json = "\n".join(lines).strip()
+        
+        parsed_payload = json.loads(clean_json)
+        types_generated = {s["type"] for s in parsed_payload.get("suggestions", [])}
+        for fb in fallback_suggestions:
+            if fb["type"] not in types_generated:
+                parsed_payload.setdefault("suggestions", []).append(fb)
     except Exception as exc:
-        logger.error(f"Failed to generate suggested prompt: {exc}")
-        suggested_prompt = fallback_prompt
+        logger.error(f"Failed to generate suggested prompts: {exc}")
+        parsed_payload = fallback_payload
 
     return {
         "success": True,
-        "suggested_prompt": suggested_prompt
+        "data": parsed_payload
     }
 
