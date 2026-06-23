@@ -5,9 +5,11 @@ import { ChevronDown, Download, Eye, RefreshCw } from "lucide-react";
 import {
   exportEditorProject,
   getEditorProjectDetail,
+  patchEditorSection,
   type EditorProjectExportFormat,
   type EditorSection,
 } from "../services/api";
+import { toastService } from "../services/toastService";
 
 const EXPORT_LABELS: Record<EditorProjectExportFormat, string> = {
   md: "Markdown (.md)",
@@ -214,6 +216,51 @@ export default function TeachingMaterialPreview() {
       window.removeEventListener("keydown", handleEscape);
     };
   }, [isDownloadMenuOpen]);
+
+  useEffect(() => {
+    const handleReplacePlaceholder = async (e: Event) => {
+      const customEvent = e as CustomEvent<{ placeholderSrc: string; newSrc: string }>;
+      const { placeholderSrc, newSrc } = customEvent.detail;
+      
+      let decodedSrc = placeholderSrc;
+      try {
+        decodedSrc = decodeURIComponent(placeholderSrc);
+      } catch {}
+
+      const targetSection = editableSections.find(
+        (s) => s.content.includes(decodedSrc) || s.content.includes(placeholderSrc)
+      );
+
+      if (targetSection) {
+        let updatedContent = targetSection.content;
+        if (targetSection.content.includes(decodedSrc)) {
+          updatedContent = targetSection.content.replace(decodedSrc, newSrc);
+        } else {
+          updatedContent = targetSection.content.replace(placeholderSrc, newSrc);
+        }
+
+        // Optimistically update local state so it renders immediately
+        setEditableSections((prev) =>
+          prev.map((s) => (s.id === targetSection.id ? { ...s, content: updatedContent } : s))
+        );
+
+        try {
+          await patchEditorSection(targetSection.id, {
+            content: updatedContent,
+          });
+          toastService.success("Đã thay thế placeholder bằng hình ảnh thành công!");
+        } catch (err) {
+          console.error("Failed to save image URL:", err);
+          toastService.error("Không thể lưu URL hình ảnh lên máy chủ");
+        }
+      }
+    };
+
+    window.addEventListener("replace-placeholder", handleReplacePlaceholder);
+    return () => {
+      window.removeEventListener("replace-placeholder", handleReplacePlaceholder);
+    };
+  }, [editableSections]);
 
   const handleExportProject = async (format: EditorProjectExportFormat) => {
     if (!projectId) return;

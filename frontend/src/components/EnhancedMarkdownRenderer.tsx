@@ -7,7 +7,7 @@
  * 3. All existing citation link logic (passed via `components` prop override)
  */
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -178,6 +178,7 @@ declare global {
   interface Window {
     renderMathInElement?: any;
     _katexLoading?: boolean;
+    katex?: any;
   }
 }
 
@@ -288,6 +289,40 @@ function loadKaTeX(): Promise<void> {
 // Main component
 // ---------------------------------------------------------------------------
 
+function MathRenderer({ latex, inline }: { latex: string; inline: boolean }) {
+  const [katexLoaded, setKatexLoaded] = useState(() => typeof window !== "undefined" && !!window.katex);
+
+  useEffect(() => {
+    if (katexLoaded) return;
+    const interval = setInterval(() => {
+      if (typeof window !== "undefined" && window.katex) {
+        setKatexLoaded(true);
+        clearInterval(interval);
+      }
+    }, 100);
+    return () => clearInterval(interval);
+  }, [katexLoaded]);
+
+  if (!katexLoaded) {
+    return inline ? <code>{`$${latex}$`}</code> : <pre>{`$$${latex}$$`}</pre>;
+  }
+
+  try {
+    const html = window.katex.renderToString(latex, {
+      displayMode: !inline,
+      throwOnError: false,
+    });
+    if (inline) {
+      return <span dangerouslySetInnerHTML={{ __html: html }} />;
+    } else {
+      return <div className="katex-display-wrapper" style={{ margin: "12px 0", overflowX: "auto", overflowY: "hidden" }} dangerouslySetInnerHTML={{ __html: html }} />;
+    }
+  } catch (err) {
+    console.error("KaTeX rendering error:", err);
+    return inline ? <code>{`$${latex}$`}</code> : <pre>{`$$${latex}$$`}</pre>;
+  }
+}
+
 export function EnhancedMarkdownRenderer({
   content,
   components = {},
@@ -295,50 +330,34 @@ export function EnhancedMarkdownRenderer({
 }: EnhancedMarkdownRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Preprocess content to wrap placeholder URLs containing spaces in angle brackets < > so remark-parse compiles them as images
-  const processedContent = React.useMemo(() => {
+  // Preprocess content to wrap placeholder URLs containing spaces in angle brackets < > and convert math delimiters to custom code blocks
+  const processedContent = useMemo(() => {
     if (!content) return "";
-    return content.replace(
-      /!\[([^\]]*)\]\(\s*(placeholder:[^)]*(?:\([^)]*\)[^)]*)*)\s*\)/g,
-      (_, alt, path) => `![${alt}](<${path.trim()}>)`
+    const wrappedPlaceholders = content.replace(
+      /!\s*\[([^\]]*)\]\(\s*(<?\/?placeholder:(?:[^\(\)]*|\([^)]*\))*>?)\s*\)/g,
+      (_, alt, path) => {
+        let cleanPath = path.trim();
+        if (cleanPath.startsWith("<") && cleanPath.endsWith(">")) {
+          cleanPath = cleanPath.slice(1, -1);
+        }
+        if (cleanPath.startsWith("/")) {
+          cleanPath = cleanPath.substring(1);
+        }
+        const prefix = "placeholder:";
+        const description = cleanPath.substring(prefix.length);
+        const encodedPath = prefix + encodeURIComponent(description);
+        return `![${alt}](${encodedPath})`;
+      }
     );
+    return convertMathToCodeBlocks(wrappedPlaceholders);
   }, [content]);
 
-  // 1. Load KaTeX and render math when content changes
+  // Load KaTeX CSS and JS once on mount
   useEffect(() => {
-    loadKaTeX()
-      .then(() => {
-        if (containerRef.current && window.renderMathInElement) {
-          window.renderMathInElement(containerRef.current, {
-            delimiters: [
-              { left: "$$", right: "$$", display: true },
-              { left: "$", right: "$", display: false },
-              { left: "\\(", right: "\\)", display: false },
-              { left: "\\[", right: "\\]", display: true },
-            ],
-            throwOnError: false,
-          });
-        }
-      })
-      .catch((err) => {
-        console.error("Failed to render math with KaTeX:", err);
-      });
-  }, [processedContent]);
-
-  // 2. Re-apply math rendering on every component render/update to prevent React's virtual DOM reconciliation from resetting it to raw text
-  useEffect(() => {
-    if (containerRef.current && window.renderMathInElement) {
-      window.renderMathInElement(containerRef.current, {
-        delimiters: [
-          { left: "$$", right: "$$", display: true },
-          { left: "$", right: "$", display: false },
-          { left: "\\(", right: "\\)", display: false },
-          { left: "\\[", right: "\\]", display: true },
-        ],
-        throwOnError: false,
-      });
-    }
-  });
+    loadKaTeX().catch((err) => {
+      console.error("Failed to load KaTeX on mount:", err);
+    });
+  }, []);
 
   const defaultComponents: Components = {
     // ── Blockquote → Callout ──────────────────────────────────────────────
@@ -366,14 +385,28 @@ export function EnhancedMarkdownRenderer({
       );
     },
 
+    // ── Pre tag override to prevent wrapping math blocks in dark pre elements ──
+    pre: ({ children }) => {
+      const isMath = React.isValidElement(children) && 
+        (children.props as any)?.className === "language-math-display";
+      if (isMath) {
+        return <>{children}</>;
+      }
+      return <pre>{children}</pre>;
+    },
+
     // ── Code block → styled code ──────────────────────────────────────────
     code: ({ className: cls, children, ...props }) => {
       const isInline = !cls;
       const lang = (cls || "").replace("language-", "");
-
-
+      const codeText = typeof children === "string" ? children : extractText(children);
 
       if (isInline) {
+        if (codeText.startsWith("math-inline:")) {
+          const latex = codeText.substring("math-inline:".length);
+          return <MathRenderer latex={latex} inline={true} />;
+        }
+
         return (
           <code
             style={{
@@ -389,6 +422,10 @@ export function EnhancedMarkdownRenderer({
             {children}
           </code>
         );
+      }
+
+      if (lang === "math-display") {
+        return <MathRenderer latex={codeText} inline={false} />;
       }
 
       return (
@@ -482,27 +519,19 @@ export function EnhancedMarkdownRenderer({
     img: ({ src, alt }) => {
       const isPlaceholder = src?.startsWith("placeholder:");
       if (src && isPlaceholder) {
-        const description = src.substring("placeholder:".length).trim();
-        const decodedDescription = description.replace(/%7C/g, "|");
+        const rawDescription = src.substring("placeholder:".length).trim();
+        let decodedDescription = rawDescription;
+        try {
+          decodedDescription = decodeURIComponent(rawDescription);
+        } catch (e) {
+          // fallback
+        }
         const parts = decodedDescription.split("|");
         const rawVi = parts[0] || "";
         const rawEn = parts[1] || rawVi;
 
-        const cleanVi = (() => {
-          try {
-            return decodeURIComponent(rawVi).replace(/_/g, " ");
-          } catch {
-            return rawVi.replace(/_/g, " ");
-          }
-        })();
-
-        const cleanEn = (() => {
-          try {
-            return decodeURIComponent(rawEn).replace(/_/g, " ");
-          } catch {
-            return rawEn.replace(/_/g, " ");
-          }
-        })();
+        const cleanVi = rawVi.trim().replace(/_/g, " ");
+        const cleanEn = rawEn.trim().replace(/_/g, " ");
 
         return (
           <div
@@ -632,8 +661,193 @@ export function EnhancedMarkdownRenderer({
 }
 
 // ---------------------------------------------------------------------------
+// Utility: escape underscores, asterisks, and double backslashes in math blocks
+// ---------------------------------------------------------------------------
+
+function convertMathToCodeBlocks(content: string): string {
+  let result = "";
+  let i = 0;
+  
+  let inBlockCode = false;
+  let inInlineCode = false;
+  let inLinkUrl = false;
+  
+  while (i < content.length) {
+    // Check block code ```
+    if (content.startsWith("```", i)) {
+      inBlockCode = !inBlockCode;
+      result += "```";
+      i += 3;
+      continue;
+    }
+    
+    // Check inline code `
+    if (content[i] === "`" && !inBlockCode) {
+      inInlineCode = !inInlineCode;
+      result += "`";
+      i++;
+      continue;
+    }
+    
+    // Skip checking math/links if we are inside code
+    if (inBlockCode || inInlineCode) {
+      result += content[i];
+      i++;
+      continue;
+    }
+    
+    // Check link URL start ](
+    if (content.startsWith("](", i)) {
+      inLinkUrl = true;
+      result += "](";
+      i += 2;
+      continue;
+    }
+    
+    // Check link URL end )
+    if (inLinkUrl && content[i] === ")") {
+      inLinkUrl = false;
+      result += ")";
+      i++;
+      continue;
+    }
+
+    if (inLinkUrl) {
+      result += content[i];
+      i++;
+      continue;
+    }
+
+    // Check math block $$
+    if (content.startsWith("$$", i)) {
+      let backslashCount = 0;
+      let temp = i - 1;
+      while (temp >= 0 && content[temp] === "\\") {
+        backslashCount++;
+        temp--;
+      }
+      const isEscaped = backslashCount % 2 !== 0;
+      if (!isEscaped) {
+        const closeIdx = content.indexOf("$$", i + 2);
+        if (closeIdx !== -1) {
+          const mathContent = content.substring(i + 2, closeIdx);
+          result += "\n\n```math-display\n" + mathContent + "\n```\n\n";
+          i = closeIdx + 2;
+          continue;
+        }
+      }
+    }
+    
+    // Check LaTeX delimiters: \[ and \] (block math)
+    if (content.startsWith("\\[", i)) {
+      let backslashCount = 0;
+      let temp = i - 1;
+      while (temp >= 0 && content[temp] === "\\") {
+        backslashCount++;
+        temp--;
+      }
+      const isEscaped = backslashCount % 2 !== 0;
+      if (!isEscaped) {
+        const closeIdx = content.indexOf("\\]", i + 2);
+        if (closeIdx !== -1) {
+          const mathContent = content.substring(i + 2, closeIdx);
+          result += "\n\n```math-display\n" + mathContent + "\n```\n\n";
+          i = closeIdx + 2;
+          continue;
+        }
+      }
+    }
+
+    // Check LaTeX delimiters: \( and \) (inline math)
+    if (content.startsWith("\\(", i)) {
+      let backslashCount = 0;
+      let temp = i - 1;
+      while (temp >= 0 && content[temp] === "\\") {
+        backslashCount++;
+        temp--;
+      }
+      const isEscaped = backslashCount % 2 !== 0;
+      if (!isEscaped) {
+        const closeIdx = content.indexOf("\\)", i + 2);
+        if (closeIdx !== -1) {
+          const mathContent = content.substring(i + 2, closeIdx);
+          result += "`math-inline:" + mathContent + "`";
+          i = closeIdx + 2;
+          continue;
+        }
+      }
+    }
+
+    // Check math inline $
+    if (content[i] === "$") {
+      let backslashCount = 0;
+      let temp = i - 1;
+      while (temp >= 0 && content[temp] === "\\") {
+        backslashCount++;
+        temp--;
+      }
+      const isEscaped = backslashCount % 2 !== 0;
+      
+      if (!isEscaped) {
+        let closeIdx = -1;
+        for (let j = i + 1; j < content.length; j++) {
+          if (content[j] === "\n") {
+            break;
+          }
+          if (content[j] === "$" && content[j - 1] !== "\\") {
+            closeIdx = j;
+            break;
+          }
+        }
+        if (closeIdx !== -1 && closeIdx > i + 1) {
+          const mathContent = content.substring(i + 1, closeIdx);
+          result += "`math-inline:" + mathContent + "`";
+          i = closeIdx + 1;
+          continue;
+        }
+      }
+    }
+
+    // Process underscore outside of math/code/links
+    if (content[i] === "_") {
+      let backslashCount = 0;
+      let temp = i - 1;
+      while (temp >= 0 && content[temp] === "\\") {
+        backslashCount++;
+        temp--;
+      }
+      const isEscaped = backslashCount % 2 !== 0;
+      
+      if (isEscaped) {
+        result += "_";
+      } else {
+        const prevChar = i > 0 ? content[i - 1] : "";
+        const nextChar = i < content.length - 1 ? content[i + 1] : "";
+        const isSubscript = 
+          /^[A-Za-z0-9})\]]$/.test(prevChar) && 
+          /^[A-Za-z0-9{(]$/.test(nextChar);
+          
+        if (isSubscript) {
+          result += "\\_";
+        } else {
+          result += "_";
+        }
+      }
+      i++;
+      continue;
+    }
+    
+    result += content[i];
+    i++;
+  }
+  
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Utility: flatten React children to plain text (for callout detection)
 // ---------------------------------------------------------------------------
+
 
 function extractText(node: React.ReactNode): string {
   if (typeof node === "string") return node;
