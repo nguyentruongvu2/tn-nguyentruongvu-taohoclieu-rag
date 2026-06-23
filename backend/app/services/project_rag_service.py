@@ -12,6 +12,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+import os
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -305,6 +306,137 @@ def infer_level_from_title(title: str) -> int:
     return max(1, len(matched.group(1).split(".")))
 
 
+def _fetch_image_bytes(url: str) -> bytes | None:
+    if not url.startswith("http"):
+        return None
+        
+    import hashlib
+    import os
+    import httpx
+    
+    upload_dir = os.path.join(os.path.dirname(__file__), '../../uploads')
+    cache_dir = os.path.join(upload_dir, "image_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    url_hash = hashlib.md5(url.encode("utf-8")).hexdigest()
+    cache_path = os.path.join(cache_dir, url_hash)
+    
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "rb") as f:
+                return f.read()
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Failed to read cached image: {e}")
+            
+    try:
+        response = httpx.get(url, timeout=15.0)
+        if response.status_code == 200:
+            try:
+                with open(cache_path, "wb") as f:
+                    f.write(response.content)
+            except Exception as e:
+                logging.getLogger(__name__).error(f"Failed to write image cache: {e}")
+            return response.content
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Failed to fetch image from URL {url}: {e}")
+    return None
+
+
+def _latex_to_png(latex: str) -> bytes | None:
+    # Strip delimiters
+    clean_latex = latex.strip("$").strip().strip("\\(").strip("\\)").strip("\\[").strip("\\]").strip()
+    if not clean_latex:
+        return None
+        
+    import hashlib
+    import os
+    import httpx
+    
+    upload_dir = os.path.join(os.path.dirname(__file__), '../../uploads')
+    cache_dir = os.path.join(upload_dir, "latex_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    latex_hash = hashlib.md5(clean_latex.encode("utf-8")).hexdigest()
+    cache_path = os.path.join(cache_dir, f"{latex_hash}.png")
+    
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "rb") as f:
+                return f.read()
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Failed to read cached latex PNG: {e}")
+            
+    # URL encode
+    from urllib.parse import quote
+    encoded = quote(clean_latex)
+    # Using CodeCogs API with DPI (300) and white background for extreme sharpness
+    url = f"https://latex.codecogs.com/png.latex?%5Cbg_white%20%5Cdpi%7B300%7D%20{encoded}"
+    try:
+        response = httpx.get(url, timeout=10.0)
+        if response.status_code == 200:
+            try:
+                with open(cache_path, "wb") as f:
+                    f.write(response.content)
+            except Exception as e:
+                logging.getLogger(__name__).error(f"Failed to write latex PNG cache: {e}")
+            return response.content
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Failed to render LaTeX {clean_latex} to PNG: {e}")
+    return None
+
+
+def _prefetch_resources(markdown: str) -> None:
+    import re
+    import hashlib
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+    
+    # 1. Parse all image URLs (excluding placeholder:)
+    img_urls = re.findall(r'!\[.*?\]\(\s*<?(http[s]?://[^)>]+)>?\s*\)', markdown)
+    
+    # 2. Parse all math formulas: $...$, $$...$$, \(...\), \[...\]
+    math_segments = re.findall(r'(\$\$[^\n$]+\$\$|\$[^\n$]+\$|\\\[.*?\\\]|\\\(.*?\\\))', markdown)
+    
+    # Clean unique items
+    unique_urls = list(set(img_urls))
+    unique_maths = list(set(math_segments))
+    
+    # Filter uncached images
+    upload_dir = os.path.join(os.path.dirname(__file__), '../../uploads')
+    img_cache_dir = os.path.join(upload_dir, "image_cache")
+    os.makedirs(img_cache_dir, exist_ok=True)
+    
+    uncached_urls = []
+    for url in unique_urls:
+        url_hash = hashlib.md5(url.encode("utf-8")).hexdigest()
+        cache_path = os.path.join(img_cache_dir, url_hash)
+        if not os.path.exists(cache_path):
+            uncached_urls.append(url)
+            
+    # Filter uncached math
+    latex_cache_dir = os.path.join(upload_dir, "latex_cache")
+    os.makedirs(latex_cache_dir, exist_ok=True)
+    
+    uncached_maths = []
+    for math in unique_maths:
+        clean_latex = math.strip("$").strip().strip("\\(").strip("\\)").strip("\\[").strip("\\]").strip()
+        if clean_latex:
+            latex_hash = hashlib.md5(clean_latex.encode("utf-8")).hexdigest()
+            cache_path = os.path.join(latex_cache_dir, f"{latex_hash}.png")
+            if not os.path.exists(cache_path):
+                uncached_maths.append(math)
+                
+    if not uncached_urls and not uncached_maths:
+        return
+        
+    # Parallel fetch
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        for url in uncached_urls:
+            executor.submit(_fetch_image_bytes, url)
+        for math in uncached_maths:
+            executor.submit(_latex_to_png, math)
+
+
 def _render_project_markdown(project: dict[str, Any]) -> str:
     sections = _project_sections_sorted(project)
     lines = [f"# {project['title']}", ""]
@@ -530,6 +662,7 @@ def _render_project_pdf_bytes(project: dict[str, Any]) -> bytes:
         TableStyle = platypus_module.TableStyle
         PageBreak = platypus_module.PageBreak
         KeepTogether = platypus_module.KeepTogether
+        RLImage = platypus_module.Image
         
         styles_module = importlib.import_module("reportlab.lib.styles")
         getSampleStyleSheet = styles_module.getSampleStyleSheet
@@ -541,6 +674,7 @@ def _render_project_pdf_bytes(project: dict[str, Any]) -> bytes:
         raise RuntimeError(f"Failed to load ReportLab Platypus components: {exc}")
 
     markdown = _render_project_markdown(project)
+    _prefetch_resources(markdown)
     stream = BytesIO()
     
     page_width, page_height = a4_pagesize
@@ -636,6 +770,145 @@ def _render_project_pdf_bytes(project: dict[str, Any]) -> bytes:
         escaped = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', escaped)
         escaped = re.sub(r'\*(.*?)\*', r'<i>\1</i>', escaped)
         return escaped
+
+    temp_files = []
+
+    def _process_math_in_text(html_text: str, text_style: ParagraphStyle) -> str:
+        math_segments = re.findall(r'(\$\$[^\n$]+\$\$|\$[^\n$]+\$|\\\(.*?\\\)|\\\[.*?\\\])', html_text)
+        for math in math_segments:
+            png_bytes = _latex_to_png(math)
+            if png_bytes:
+                try:
+                    from PIL import Image as PILImage
+                    pil_img = PILImage.open(BytesIO(png_bytes))
+                    w, h = pil_img.size
+                    
+                    target_h = max(10, text_style.fontSize * 1.1)
+                    target_w = int(w * (target_h / h))
+                    if target_w > max_width:
+                        target_w = int(max_width)
+                        target_h = int(h * (max_width / w))
+                    
+                    temp_dir = os.path.join(os.path.dirname(__file__), '../../uploads/temp_export')
+                    os.makedirs(temp_dir, exist_ok=True)
+                    temp_file = os.path.join(temp_dir, f"math_h_{uuid.uuid4().hex}.png")
+                    with open(temp_file, "wb") as f_out:
+                        f_out.write(png_bytes)
+                    temp_files.append(temp_file)
+                    
+                    img_tag = f'<img src="{temp_file}" width="{target_w}" height="{target_h}" valign="middle"/>'
+                    html_text = html_text.replace(math, img_tag)
+                except Exception as e:
+                    logging.getLogger(__name__).error(f"Failed to render math in text: {e}")
+        return html_text
+
+    def _process_pdf_paragraph(text: str, body_style: ParagraphStyle) -> list[Any]:
+        stripped = text.strip()
+        img_match = re.match(r"^!\[(.*?)\]\(\s*<?(placeholder:[^)>]*|http[s]?://[^)>]+)>?\s*\)$", stripped)
+        if img_match:
+            alt = img_match.group(1)
+            path = img_match.group(2).strip()
+            
+            if path.startswith("placeholder:"):
+                desc = path[len("placeholder:"):].strip()
+                parts = desc.split("|")
+                raw_vi = parts[0] or ""
+                raw_en = parts[1] if len(parts) > 1 else raw_vi
+                
+                clean_vi = raw_vi.strip().replace("_", " ")
+                clean_en = raw_en.strip().replace("_", " ")
+                
+                title_style = ParagraphStyle(
+                    'PDFPlacholderTitle',
+                    parent=body_style,
+                    fontName=body_style.fontName + "-Bold" if "Bold" not in body_style.fontName else body_style.fontName,
+                    textColor=HexColor("#164e63")
+                )
+                desc_style = ParagraphStyle(
+                    'PDFPlaceholderDesc',
+                    parent=body_style,
+                    fontStyle="italic",
+                    textColor=HexColor("#0891b2")
+                )
+                
+                p_title = Paragraph(f"<b>📊 Khung hình minh họa gợi ý: {html.escape(alt)}</b>", title_style)
+                p_vi = Paragraph(f"Mô tả gợi ý: {html.escape(clean_vi)}", desc_style)
+                p_en = Paragraph(f"Prompt AI: {html.escape(clean_en)}", body_style)
+                
+                t_data = [[p_title], [p_vi], [p_en]]
+                t = Table(t_data, colWidths=[max_width])
+                t.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,-1), HexColor("#ecfeff")),
+                    ('PADDING', (0,0), (-1,-1), 12),
+                    ('BOX', (0,0), (-1,-1), 1.5, HexColor("#0891b2")),
+                    ('TOPPADDING', (0,0), (-1,-1), 4),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+                ]))
+                return [t, Spacer(1, 8)]
+            else:
+                img_bytes = _fetch_image_bytes(path)
+                if img_bytes:
+                    try:
+                        from PIL import Image as PILImage
+                        pil_img = PILImage.open(BytesIO(img_bytes))
+                        w, h = pil_img.size
+                        if w > max_width:
+                            h = int(h * (max_width / w))
+                            w = int(max_width)
+                        
+                        temp_dir = os.path.join(os.path.dirname(__file__), '../../uploads/temp_export')
+                        os.makedirs(temp_dir, exist_ok=True)
+                        temp_file = os.path.join(temp_dir, f"img_{uuid.uuid4().hex}.png")
+                        with open(temp_file, "wb") as f_out:
+                            f_out.write(img_bytes)
+                        temp_files.append(temp_file)
+                        
+                        return [RLImage(temp_file, width=w, height=h), Spacer(1, 8)]
+                    except Exception as e:
+                        logging.getLogger(__name__).error(f"Failed to render block image: {e}")
+                
+                fallback_style = ParagraphStyle('PDFFallbackImage', parent=body_style, textColor=HexColor("#ef4444"))
+                return [Paragraph(f"<b>[Lỗi tải hình ảnh: {html.escape(alt)} ({path})]</b>", fallback_style), Spacer(1, 4)]
+
+        html_text = _inline_markdown_to_html(text)
+        html_text = _process_math_in_text(html_text, body_style)
+                    
+        inline_images = re.findall(r'(!\[.*?\]\(\s*(?:<.*?>|.*?)\s*\))', html_text)
+        for img_syntax in inline_images:
+            match = re.match(r'!\[(.*?)\]\(\s*<?(placeholder:[^)>]*|http[s]?://[^)>]+)>?\s*\)', img_syntax)
+            if match:
+                alt = match.group(1)
+                path = match.group(2).strip()
+                
+                if path.startswith("placeholder:"):
+                    html_text = html_text.replace(img_syntax, f"<b>📊 [Khung ảnh gợi ý: {html.escape(alt)}]</b>")
+                else:
+                    img_bytes = _fetch_image_bytes(path)
+                    if img_bytes:
+                        try:
+                            from PIL import Image as PILImage
+                            pil_img = PILImage.open(BytesIO(img_bytes))
+                            w, h = pil_img.size
+                            
+                            target_w = min(120, w)
+                            target_h = int(h * (target_w / w))
+                            
+                            temp_dir = os.path.join(os.path.dirname(__file__), '../../uploads/temp_export')
+                            os.makedirs(temp_dir, exist_ok=True)
+                            temp_file = os.path.join(temp_dir, f"inline_img_{uuid.uuid4().hex}.png")
+                            with open(temp_file, "wb") as f_out:
+                                f_out.write(img_bytes)
+                            temp_files.append(temp_file)
+                            
+                            img_tag = f'<img src="{temp_file}" width="{target_w}" height="{target_h}" valign="middle"/>'
+                            html_text = html_text.replace(img_syntax, img_tag)
+                        except Exception as e:
+                            logging.getLogger(__name__).error(f"Failed to inline render image: {e}")
+                            html_text = html_text.replace(img_syntax, f"<b>[Lỗi tải hình: {html.escape(alt)}]</b>")
+                    else:
+                        html_text = html_text.replace(img_syntax, f"<b>[Lỗi tải hình: {html.escape(alt)}]</b>")
+                        
+        return [Paragraph(html_text, body_style)]
 
     blocks = []
     lines = markdown.splitlines()
@@ -807,19 +1080,24 @@ def _render_project_pdf_bytes(project: dict[str, Any]) -> bytes:
         b_type = block["type"]
         
         if b_type == "h1":
-            flowables.append(Paragraph(_inline_markdown_to_html(block["content"]), h1_style))
+            processed_html = _process_math_in_text(_inline_markdown_to_html(block["content"]), h1_style)
+            flowables.append(Paragraph(processed_html, h1_style))
         elif b_type == "h2":
-            flowables.append(Paragraph(_inline_markdown_to_html(block["content"]), h2_style))
+            processed_html = _process_math_in_text(_inline_markdown_to_html(block["content"]), h2_style)
+            flowables.append(Paragraph(processed_html, h2_style))
         elif b_type == "h3":
-            flowables.append(Paragraph(_inline_markdown_to_html(block["content"]), h3_style))
+            processed_html = _process_math_in_text(_inline_markdown_to_html(block["content"]), h3_style)
+            flowables.append(Paragraph(processed_html, h3_style))
         elif b_type == "h4":
-            flowables.append(Paragraph(_inline_markdown_to_html(block["content"]), h4_style))
+            processed_html = _process_math_in_text(_inline_markdown_to_html(block["content"]), h4_style)
+            flowables.append(Paragraph(processed_html, h4_style))
         elif b_type == "h5" or (b_type.startswith("h") and b_type[1:].isdigit()):
-            flowables.append(Paragraph(_inline_markdown_to_html(block["content"]), h5_style))
+            processed_html = _process_math_in_text(_inline_markdown_to_html(block["content"]), h5_style)
+            flowables.append(Paragraph(processed_html, h5_style))
             
         elif b_type == "paragraph":
             text = " ".join([l.strip() for l in block["lines"]])
-            flowables.append(Paragraph(_inline_markdown_to_html(text), body_style))
+            flowables.extend(_process_pdf_paragraph(text, body_style))
             
         elif b_type == "code":
             code_style = ParagraphStyle(
@@ -870,7 +1148,7 @@ def _render_project_pdf_bytes(project: dict[str, Any]) -> bytes:
                 leading=13,
                 textColor=HexColor("#1e3a8a") if is_note else HexColor("#334155")
             )
-            note_text = "<br/>".join([_inline_markdown_to_html(line) for line in block["lines"]])
+            note_text = "<br/>".join([_process_math_in_text(_inline_markdown_to_html(line), note_style) for line in block["lines"]])
             p = Paragraph(note_text, note_style)
             tbl_style = TableStyle([
                 ('BACKGROUND', (0,0), (-1,-1), HexColor("#eff6ff") if is_note else HexColor("#f8fafc")),
@@ -905,7 +1183,8 @@ def _render_project_pdf_bytes(project: dict[str, Any]) -> bytes:
                         prefix = "&bull; "
                         content = stripped
                         
-                flowables.append(Paragraph(f"{prefix}{_inline_markdown_to_html(content)}", list_style))
+                processed_content = _process_math_in_text(_inline_markdown_to_html(content), list_style)
+                flowables.append(Paragraph(f"{prefix}{processed_content}", list_style))
             flowables.append(Spacer(1, 6))
             
         elif b_type == "table":
@@ -943,8 +1222,10 @@ def _render_project_pdf_bytes(project: dict[str, Any]) -> bytes:
                     for cell in row:
                         cell_html = _inline_markdown_to_html(cell)
                         if row_idx == 0:
+                            cell_html = _process_math_in_text(cell_html, header_style)
                             formatted_row.append(Paragraph(cell_html, header_style))
                         else:
+                            cell_html = _process_math_in_text(cell_html, cell_style)
                             formatted_row.append(Paragraph(cell_html, cell_style))
                     formatted_data.append(formatted_row)
                 
@@ -969,9 +1250,17 @@ def _render_project_pdf_bytes(project: dict[str, Any]) -> bytes:
                 flowables.append(KeepTogether([t]))
                 flowables.append(Spacer(1, 8))
 
-    doc.build(flowables)
-    stream.seek(0)
-    return stream.getvalue()
+    try:
+        doc.build(flowables)
+        stream.seek(0)
+        return stream.getvalue()
+    finally:
+        for fpath in temp_files:
+            try:
+                if os.path.exists(fpath):
+                    os.remove(fpath)
+            except Exception as e:
+                logging.getLogger(__name__).error(f"Failed to remove temp file {fpath}: {e}")
 
 
 def _render_project_docx_bytes(project: dict[str, Any]) -> bytes:
@@ -986,6 +1275,7 @@ def _render_project_docx_bytes(project: dict[str, Any]) -> bytes:
     from docx.oxml.ns import nsdecls
 
     markdown = _render_project_markdown(project)
+    _prefetch_resources(markdown)
 
     def add_formatted_text(p, text, force_bold=False, force_italic=False, force_color=None):
         parts = re.split(r'(\*\*.*?\*\*|\*.*?\*|`.*?`)', text)
@@ -1024,6 +1314,60 @@ def _render_project_docx_bytes(project: dict[str, Any]) -> bytes:
                     run.italic = True
                 if force_color:
                     run.font.color.rgb = force_color
+
+    def process_text_runs_in_paragraph(p, text, force_bold=False, force_italic=False, force_color=None):
+        parts = re.split(r'(!\[.*?\]\(\s*(?:<.*?>|.*?)\s*\)|\$\$[^\n$]+\$\$|\$[^\n$]+\$|\\\[.*?\\\]|\\\(.*?\\\))', text)
+        for part in parts:
+            if not part:
+                continue
+            img_match = re.match(r'^!\[(.*?)\]\(\s*<?(placeholder:[^)>]*|http[s]?://[^)>]+)>?\s*\)$', part.strip())
+            if img_match:
+                alt = img_match.group(1)
+                path = img_match.group(2).strip()
+                if path.startswith("placeholder:"):
+                    run = p.add_run(f"📊 [Khung ảnh gợi ý: {alt}]")
+                    run.bold = True
+                    run.font.color.rgb = RGBColor(0x08, 0x91, 0xb2)
+                    run.font.name = 'Times New Roman'
+                else:
+                    img_bytes = _fetch_image_bytes(path)
+                    if img_bytes:
+                        try:
+                            from PIL import Image as PILImage
+                            pil_img = PILImage.open(BytesIO(img_bytes))
+                            w, h = pil_img.size
+                            target_h = Pt(24)
+                            target_w = Pt(24 * (w / h))
+                            run = p.add_run()
+                            run.add_picture(BytesIO(img_bytes), width=target_w, height=target_h)
+                        except Exception:
+                            run = p.add_run(f"[Lỗi ảnh: {alt}]")
+                            run.font.color.rgb = RGBColor(0xef, 0x44, 0x44)
+                            run.font.name = 'Times New Roman'
+                    else:
+                        run = p.add_run(f"[Lỗi ảnh: {alt}]")
+                        run.font.color.rgb = RGBColor(0xef, 0x44, 0x44)
+                        run.font.name = 'Times New Roman'
+            elif part.startswith('$') or part.startswith('\\(') or part.startswith('\\['):
+                math_bytes = _latex_to_png(part)
+                if math_bytes:
+                    try:
+                        from PIL import Image as PILImage
+                        pil_img = PILImage.open(BytesIO(math_bytes))
+                        w, h = pil_img.size
+                        is_block = part.startswith('$$') or part.startswith('\\[')
+                        target_h = Pt(20) if is_block else Pt(11.5)
+                        target_w = Pt(target_h.pt * (w / h))
+                        run = p.add_run()
+                        run.add_picture(BytesIO(math_bytes), width=target_w, height=target_h)
+                    except Exception:
+                        run = p.add_run(part)
+                        run.font.name = 'Courier New'
+                else:
+                    run = p.add_run(part)
+                    run.font.name = 'Courier New'
+            else:
+                add_formatted_text(p, part, force_bold=force_bold, force_italic=force_italic, force_color=force_color)
 
     blocks = []
     lines = markdown.splitlines()
@@ -1251,12 +1595,125 @@ def _render_project_docx_bytes(project: dict[str, Any]) -> bytes:
                 color = RGBColor(0x0f, 0x76, 0x6e)
             elif level == 3:
                 color = RGBColor(0x1e, 0x29, 0x3b)
-            add_formatted_text(p, block["content"], force_color=color)
+            process_text_runs_in_paragraph(p, block["content"], force_bold=True, force_color=color)
         
         elif b_type == "paragraph":
             text = " ".join([l.strip() for l in block["lines"]])
-            p = document.add_paragraph()
-            add_formatted_text(p, text)
+            stripped = text.strip()
+            
+            # Check block image / placeholder
+            img_match = re.match(r"^!\[(.*?)\]\(\s*<?(placeholder:[^)>]*|http[s]?://[^)>]+)>?\s*\)$", stripped)
+            if img_match:
+                alt = img_match.group(1)
+                path = img_match.group(2).strip()
+                if path.startswith("placeholder:"):
+                    desc = path[len("placeholder:"):].strip()
+                    from urllib.parse import unquote
+                    try:
+                        desc = unquote(desc)
+                    except Exception:
+                        pass
+                    parts = desc.split("|")
+                    raw_vi = parts[0] or ""
+                    raw_en = parts[1] if len(parts) > 1 else raw_vi
+                    clean_vi = raw_vi.strip().replace("_", " ")
+                    clean_en = raw_en.strip().replace("_", " ")
+                    
+                    table = document.add_table(rows=1, cols=1)
+                    table.style = 'Table Grid'
+                    cell = table.cell(0, 0)
+                    
+                    # Style shading: #ECFEFF (light cyan)
+                    shading_xml = f'<w:shd {nsdecls("w")} w:fill="ECFEFF"/>'
+                    cell._tc.get_or_add_tcPr().append(parse_xml(shading_xml))
+                    
+                    # Style borders: left 3pt, others 1pt in #0891B2
+                    borders_xml = f'''
+                    <w:tcBorders {nsdecls("w")}>
+                        <w:top w:val="single" w:sz="8" w:space="0" w:color="0891B2"/>
+                        <w:left w:val="single" w:sz="24" w:space="0" w:color="0891B2"/>
+                        <w:bottom w:val="single" w:sz="8" w:space="0" w:color="0891B2"/>
+                        <w:right w:val="single" w:sz="8" w:space="0" w:color="0891B2"/>
+                    </w:tcBorders>
+                    '''
+                    cell._tc.get_or_add_tcPr().append(parse_xml(borders_xml))
+                    
+                    # Style padding
+                    margins_xml = f'''
+                    <w:tcMar {nsdecls("w")}>
+                        <w:top w:w="160" w:type="dxa"/>
+                        <w:bottom w:w="160" w:type="dxa"/>
+                        <w:left w:w="240" w:type="dxa"/>
+                        <w:right w:w="240" w:type="dxa"/>
+                    </w:tcMar>
+                    '''
+                    cell._tc.get_or_add_tcPr().append(parse_xml(margins_xml))
+                    
+                    p0 = cell.paragraphs[0]
+                    p0.paragraph_format.space_before = Pt(0)
+                    p0.paragraph_format.space_after = Pt(2)
+                    run_title = p0.add_run(f"📊 Khung hình minh họa gợi ý: {alt}")
+                    run_title.bold = True
+                    run_title.font.color.rgb = RGBColor(0x16, 0x4e, 0x63)
+                    run_title.font.name = 'Times New Roman'
+                    run_title.font.size = Pt(11)
+                    
+                    p1 = cell.add_paragraph()
+                    p1.paragraph_format.space_before = Pt(2)
+                    p1.paragraph_format.space_after = Pt(2)
+                    run_vi = p1.add_run(f"Mô tả gợi ý: {clean_vi}")
+                    run_vi.italic = True
+                    run_vi.font.color.rgb = RGBColor(0x08, 0x91, 0xb2)
+                    run_vi.font.name = 'Times New Roman'
+                    run_vi.font.size = Pt(10)
+                    
+                    p2 = cell.add_paragraph()
+                    p2.paragraph_format.space_before = Pt(2)
+                    p2.paragraph_format.space_after = Pt(0)
+                    run_en = p2.add_run(f"Prompt AI: {clean_en}")
+                    run_en.font.color.rgb = RGBColor(0x33, 0x41, 0x55)
+                    run_en.font.name = 'Times New Roman'
+                    run_en.font.size = Pt(10)
+                    
+                    document.add_paragraph()
+                else:
+                    img_bytes = _fetch_image_bytes(path)
+                    if img_bytes:
+                        try:
+                            from PIL import Image as PILImage
+                            pil_img = PILImage.open(BytesIO(img_bytes))
+                            w, h = pil_img.size
+                            max_w_inches = 5.5
+                            if w / 96.0 < max_w_inches:
+                                fit_w = Inches(w / 96.0)
+                            else:
+                                fit_w = Inches(max_w_inches)
+                            
+                            fit_h = Inches(fit_w.inches * (h / w))
+                            document.add_picture(BytesIO(img_bytes), width=fit_w, height=fit_h)
+                            p_img = document.paragraphs[-1]
+                            p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            
+                            if alt:
+                                p_cap = document.add_paragraph()
+                                p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                run_cap = p_cap.add_run(f"Hình: {alt}")
+                                run_cap.italic = True
+                                run_cap.font.size = Pt(10)
+                                run_cap.font.color.rgb = RGBColor(0x64, 0x74, 0x8b)
+                        except Exception:
+                            p_err = document.add_paragraph()
+                            run_err = p_err.add_run(f"[Lỗi tải hình ảnh: {alt} ({path})]")
+                            run_err.font.color.rgb = RGBColor(0xef, 0x44, 0x44)
+                            run_err.bold = True
+                    else:
+                        p_err = document.add_paragraph()
+                        run_err = p_err.add_run(f"[Lỗi tải hình ảnh: {alt} ({path})]")
+                        run_err.font.color.rgb = RGBColor(0xef, 0x44, 0x44)
+                        run_err.bold = True
+            else:
+                p = document.add_paragraph()
+                process_text_runs_in_paragraph(p, text)
             
         elif b_type == "list":
             for line in block["lines"]:
@@ -1265,18 +1722,18 @@ def _render_project_docx_bytes(project: dict[str, Any]) -> bytes:
                     text = line_stripped[2:].strip()
                     p = document.add_paragraph(style='List Bullet')
                     p.paragraph_format.space_after = Pt(3)
-                    add_formatted_text(p, text)
+                    process_text_runs_in_paragraph(p, text)
                 else:
                     match = re.match(r"^\d+\.\s+", line_stripped)
                     if match:
                         text = line_stripped[len(match.group()):].strip()
                         p = document.add_paragraph(style='List Number')
                         p.paragraph_format.space_after = Pt(3)
-                        add_formatted_text(p, text)
+                        process_text_runs_in_paragraph(p, text)
                     else:
                         p = document.add_paragraph()
                         p.paragraph_format.space_after = Pt(3)
-                        add_formatted_text(p, line_stripped)
+                        process_text_runs_in_paragraph(p, line_stripped)
                         
         elif b_type in {"blockquote", "note"}:
             is_note = b_type == "note"
@@ -1319,7 +1776,7 @@ def _render_project_docx_bytes(project: dict[str, Any]) -> bytes:
             p.paragraph_format.space_after = Pt(0)
             
             text = "\n".join(block["lines"])
-            add_formatted_text(p, text, force_italic=True, force_color=text_color)
+            process_text_runs_in_paragraph(p, text, force_italic=True, force_color=text_color)
             document.add_paragraph()
             
         elif b_type == "code":
@@ -1432,9 +1889,9 @@ def _render_project_docx_bytes(project: dict[str, Any]) -> bytes:
                         if r_idx == 0:
                             shading_xml = f'<w:shd {nsdecls("w")} w:fill="F8FAFC"/>'
                             cell._tc.get_or_add_tcPr().append(parse_xml(shading_xml))
-                            add_formatted_text(p, cell_value, force_bold=True, force_color=RGBColor(0x1e, 0x29, 0x3b))
+                            process_text_runs_in_paragraph(p, cell_value, force_bold=True, force_color=RGBColor(0x1e, 0x29, 0x3b))
                         else:
-                            add_formatted_text(p, cell_value, force_color=RGBColor(0x33, 0x41, 0x55))
+                            process_text_runs_in_paragraph(p, cell_value, force_color=RGBColor(0x33, 0x41, 0x55))
             document.add_paragraph()
 
     stream = BytesIO()
