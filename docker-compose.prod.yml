@@ -11,11 +11,12 @@ services:
       - "8000"
     volumes:
       - uploads_data:/app/uploads
-      - chroma_data:/app/chroma_db
+      - qdrant_data:/app/qdrant_db
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - CHROMA_PERSIST_DIR=/app/chroma_db
-      - CHROMA_COLLECTION=${CHROMA_COLLECTION:-rag_markdown_chunks_gem2}
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - QDRANT_PERSIST_DIR=/app/qdrant_db
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-rag_markdown_chunks_qdrant}
       - GEMINI_EMBEDDING_MODEL=${GEMINI_EMBEDDING_MODEL:-models/gemini-embedding-001}
       - GEMINI_LLM_MODEL=${GEMINI_LLM_MODEL:-gemini-2.5-flash}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
@@ -71,7 +72,7 @@ services:
 volumes:
   uploads_data:
     driver: local
-  chroma_data:
+  qdrant_data:
     driver: local
 
 networks:

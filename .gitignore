@@ -97,4 +97,38 @@ backend/venv_test/
 
 # Local databases and vector stores
 backend/chroma_db/
+backend/qdrant_db/
 *.sqlite3
+
+# Ignore all image files (diagrams, mocks, output images)
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.img
+docs/*.png
+docs/*.jpg
+docs/*.jpeg
+
+# Ignore scratch/temporary scripts folders
+scratch/
+backend/scratch/
+uploads/scratch/
+uploads/
+
+# Ignore document models/templates/outputs
+*.docx
+*.pdf
+*.pptx
+*.xlsx
+
+# Ignore untracked test scripts and test data outputs
+test_*.py
+test_debug*.py
+test_temp*.py
+# Ignore test folders
+test/
+tests/
+**/__pycache__/
+.pytest_cache/
