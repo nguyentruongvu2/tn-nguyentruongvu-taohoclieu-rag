@@ -1,0 +1,73 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build output
+dist/
+build/
+.next/
+out/
+
+# Env files (keep .env.example as template)
+.env
+.env.local
+.env.*.local
+.env.production.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+*.swo
+*~
+
+# TypeScript cache
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# Vite cache
+.vite/
+
+# ESLint cache
+.eslintcache
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Docker
+*.tar
+.docker/
+
+# Test output
+test-results/
+junit.xml
+
+# Misc
+*.log
+*.bak
+.temp/
+.cache/
+dist-ssr/
