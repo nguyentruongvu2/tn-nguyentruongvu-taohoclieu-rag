@@ -1,216 +1,125 @@
-# RAG Teaching Material - Document Processor
+# Hệ Thống Hỗ Trợ Biên Soạn Bài Giảng RAG (RAG Teaching Material)
 
-📚 Stage 1: Document upload → Markdown conversion → Side-by-side preview
-
-## Features
-
-✅ **PDF & DOCX Support** - Upload either format  
-✅ **Smart Conversion** - Tables, headings, formatting preserved  
-✅ **Real-time Preview** - Original + Markdown side-by-side  
-✅ **Copy-Friendly** - Export raw Markdown from UI  
-✅ **Progress Tracking** - Upload feedback with progress bar  
-
-## Tech Stack
-
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
-| **Backend** | FastAPI 0.135 | REST API for document processing |
-| **Frontend** | React 18.2 + TypeScript 5.2 | UI with real-time preview |
-| **PDF Processing** | pdfplumber 0.11 | Extract text & table structure |
-| **DOCX Processing** | python-docx 1.2 | Extract text & formatting |
-| **Styling** | Tailwind CSS 3.3 | Modern responsive design |
-| **HTTP Client** | Axios 1.6 | Frontend API communication |
-
-## Quick Start
-
-```bash
-# Backend (Terminal 1)
-cd backend
-python -m venv venv && venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-
-# Frontend (Terminal 2)
-cd frontend
-npm install
-npm run dev
-```
-
-Visit **http://localhost:3000** → Upload file → View conversion ✨
-
-## Project Structure
-
-```
-RAG_Teaching_Material/
-├── backend/                  # FastAPI application
-│   ├── app/
-│   │   ├── main.py          # Server entry point
-│   │   ├── config.py        # Configuration (paths, limits)
-│   │   └── routes/
-│   │       └── documents.py # Document processing endpoints
-│   └── requirements.txt      # Dependencies (9 packages, no ML libs)
-├── frontend/                 # React TypeScript application
-│   ├── src/
-│   │   ├── App.tsx          # Main component + state
-│   │   ├── components/      # UI components
-│   │   ├── services/        # API client
-│   │   └── types/           # TypeScript interfaces
-│   └── package.json         # Dependencies
-└── uploads/                  # Uploaded file storage
-```
-
-## API Endpoints
-
-```
-POST /documents/upload    Upload file + get Markdown
-└─ File: multipart/form-data
-└─ Returns: { markdown: string, original_filename: string }
-
-GET  /docs                Swagger API documentation (FastAPI)
-```
-
-## Configuration
-
-**Backend** (`backend/app/config.py`):
-- `UPLOAD_DIR`: `./uploads/`
-- `MAX_FILE_SIZE`: 50 MB
-- `ALLOWED_EXTENSIONS`: .pdf, .docx
-
-**Frontend** (`frontend/src/services/api.ts`):
-- `VITE_API_BASE_URL`: `http://localhost:8000`
-
-## Dependencies
-
-**Backend** - 9 lightweight packages:
-```
-✓ fastapi               REST framework
-✓ uvicorn[standard]     ASGI server
-✓ python-multipart      Multipart form handling
-✓ pydantic              Validation
-✓ pdfplumber            PDF extraction
-✓ python-docx           DOCX processing
-✓ python-dotenv         Environment variables
-✓ aiofiles              Async file ops
-```
-
-**Frontend** - Core packages via npm:
-```
-✓ react                 UI library
-✓ typescript            Type safety
-✓ vite                  Build tool
-✓ tailwindcss           Styling
-✓ axios                 HTTP client
-✓ react-markdown        Markdown rendering
-```
-
-## Usage Example
-
-1. **Open app**: http://localhost:3000
-2. **Select file**: Drag & drop or click
-3. **View preview**:
-   - **Left panel**: Original document
-   - **Right panel**: Markdown conversion
-   - **Bottom**: Raw Markdown (copyable)
-4. **Export**: Copy Markdown text from bottom section
-
-Supported formats:
-- 📄 PDF files (.pdf)
-- 📝 Word documents (.docx)
-- File limit: 50 MB
-
-## Known Limitations
-
-- PDFs with complex layouts: Basic level preservation
-- Embedded images: Extracted as metadata references
-- Form fields: Treated as regular text
-- Password-protected PDFs: Not supported
-- Scanned PDFs (image-based): Text extraction limited
-
-These are Stage 1 limitations; future versions will add OCR support.
-
-## Development
-
-**Install dependencies:**
-```bash
-# Backend
-cd backend && pip install -r requirements.txt
-
-# Frontend
-cd frontend && npm install
-```
-
-**Run in development mode:**
-```bash
-# Backend with auto-reload
-uvicorn app.main:app --reload --port 8000
-
-# Frontend with HMR
-npm run dev
-```
-
-**Build frontend:**
-```bash
-cd frontend && npm run build
-# Output in: frontend/dist/
-```
-
-**Type checking:**
-```bash
-cd frontend && npx tsc --noEmit
-```
-
-## Troubleshooting
-
-### Backend won't start?
-```bash
-# Check Python version
-python --version  # Must be 3.11+
-
-# Verify imports
-python -c "from app.main import app; print('OK')"
-```
-
-### Frontend build fails?
-```bash
-# Clear cache & rebuild
-rm -r node_modules package-lock.json
-npm install
-npm run build
-```
-
-### Port conflicts?
-```bash
-# Windows: Find process on port 3000
-netstat -ano | findstr :3000
-taskkill /PID <PID> /F
-
-# macOS/Linux
-lsof -i :3000
-kill -9 <PID>
-```
-
-### Uploads not working?
-- Check `uploads/` directory exists
-- Verify file is .pdf or .docx
-- File size < 50 MB
-- Backend running: `curl http://localhost:8000/docs`
-
-## Next Steps
-
-Future stages could add:
-- 🔍 Search across uploaded documents
-- 🗂️ Document organization & tagging
-- 💾 Save conversion history
-- 📊 Statistics & analytics
-- 🤖 AI-powered summarization
-- 🔗 Vector store integration for RAG
-
-## License
-
-Educational material for teaching purposes.
+Hệ thống hỗ trợ giảng viên xây dựng bài giảng và ngân hàng câu hỏi trắc nghiệm tự động dựa trên tài liệu nguồn, ứng dụng kỹ thuật RAG (Retrieval-Augmented Generation) và mô hình ngôn ngữ lớn (LLM).
 
 ---
 
-**Status:** ✅ Ready for local development  
-**Last Updated:** 2024  
-**Stage:** 1 (Document Processing)
+## 📌 Mục Tiêu Đồ Án
+1. **Tự động hóa biên soạn giáo án**: Hỗ trợ giảng viên trích xuất tri thức từ tài liệu học tập (PDF/DOCX) để tạo dàn ý và nội dung bài giảng chi tiết một cách nhanh chóng.
+2. **Sinh câu hỏi trắc nghiệm bám sát nguồn**: Hệ thống tự động truy xuất các đoạn tri thức liên quan từ tài liệu nguồn, sau đó sử dụng LLM để sinh câu hỏi trắc nghiệm, các phương án trả lời và đáp án đúng theo các mức độ nhận thức Bloom (Nhận biết, Thông hiểu, Vận dụng).
+3. **Quản lý học liệu thông minh**: Cung cấp kho lưu trữ tài liệu dùng chung, tự động tách nhỏ văn bản (chunking) và nhúng vector (embedding) để phục vụ cho tìm kiếm ngữ nghĩa.
+4. **Chuẩn hóa đầu ra**: Cho phép xuất giáo án và ngân hàng câu hỏi dưới các định dạng thông dụng như PDF, Word (DOCX) và CSV để dễ dàng nhập (import) vào các hệ thống quản lý học tập (LMS).
+
+---
+
+## 🏗️ Kiến Trúc Hệ Thống
+
+Hệ thống được thiết kế theo kiến trúc 3 lớp (3-Tier Architecture) hiện đại, triển khai container hóa hoàn chỉnh:
+
+```mermaid
+graph TD
+    User[Giảng viên / Quản trị viên] -->|Giao diện| FE[Frontend: React + TS]
+    FE -->|API requests| NGINX[Nginx Reverse Proxy]
+    NGINX -->|Định tuyến API| BE[Backend: FastAPI]
+    BE -->|Lưu trữ vector| Qdrant[(Qdrant Vector DB)]
+    BE -->|Truy vấn dữ liệu| PostgreSQL[(PostgreSQL DB)]
+    BE -->|Yêu cầu LLM & Embeddings| LLM[Mô hình Gemini / Cohere]
+```
+
+*   **Frontend (React + TypeScript + Vite)**: Giao diện người dùng hiện đại, hiển thị trực quan giáo án và trình xem trước tài liệu song song (original & markdown).
+*   **Backend (FastAPI)**: Cung cấp API hiệu năng cao cho việc xử lý tài liệu, quản lý phiên bản, kiểm soát phân quyền người dùng và tích hợp pipeline RAG.
+*   **PostgreSQL**: Lưu trữ thông tin người dùng, lịch sử yêu cầu (usage logs) và metadata của tài liệu, cấu trúc bài giảng.
+*   **Qdrant**: Cơ sở dữ liệu vector lưu trữ các vector embedding của các đoạn văn bản (chunks) phục vụ cho truy xuất ngữ nghĩa (Retrieval).
+*   **Nginx**: Reverse proxy định tuyến các yêu cầu giữa Frontend và Backend.
+
+---
+
+## ⚙️ Các Phần Mềm Cần Thiết (Prerequisites)
+
+Để triển khai dự án, máy tính của bạn cần cài đặt sẵn:
+1.  **Docker & Docker Compose**: Để khởi chạy toàn bộ hệ thống bằng container.
+2.  **Git**: Để tải và quản lý mã nguồn.
+3.  **Trình duyệt Web**: Google Chrome, Microsoft Edge hoặc Mozilla Firefox.
+4.  **Tài khoản Google Gemini API Key**: Cần thiết để hệ thống gọi LLM sinh nội dung bài giảng và câu hỏi trắc nghiệm.
+
+---
+
+## 📁 Tổ Chức Mã Nguồn (Repository Structure)
+
+Toàn bộ mã nguồn và cấu hình của dự án được tổ chức gọn gàng bên trong thư mục `src/`:
+
+```
+AI_RAG_Project/
+├── docs/                     # Tài liệu hướng dẫn đồ án
+├── src/                      # Thư mục mã nguồn chính
+│   ├── backend/              # Mã nguồn FastAPI
+│   ├── frontend/             # Giao diện React
+│   ├── nginx/                # Cấu hình Reverse Proxy Nginx
+│   ├── scripts/              # Các kịch bản shell trợ giúp triển khai
+│   ├── test/                 # Các kịch bản kiểm thử E2E (End-to-End)
+│   ├── uploads/              # Lưu trữ tạm các tệp tài liệu upload
+│   ├── .env.example          # Tệp cấu hình biến môi trường mẫu
+│   ├── docker-compose.yml    # File Docker Compose môi trường Dev/Local
+│   └── docker-compose.prod.yml # File Docker Compose môi trường Product
+├── README.md                 # Tệp giới thiệu & hướng dẫn này
+└── render.yaml               # Cấu hình triển khai Cloud (Render)
+```
+
+---
+
+## 🚀 Hướng Dẫn Triển Khai Bằng Docker
+
+Việc chạy hệ thống cực kỳ đơn giản nhờ Docker Compose. Vui lòng làm theo các bước dưới đây:
+
+### Bước 1: Cấu hình biến môi trường
+1.  Di chuyển vào thư mục `src/`:
+    ```bash
+    cd src
+    ```
+2.  Sao chép tệp cấu hình môi trường mẫu thành tệp cấu hình thực tế:
+    ```bash
+    cp .env.example .env
+    ```
+3.  Mở tệp `.env` vừa tạo và điền khóa API của bạn vào:
+    ```env
+    GEMINI_API_KEY=your_gemini_api_key_here
+    COHERE_API_KEY=your_cohere_api_key_here
+    ```
+
+### Bước 2: Khởi chạy các dịch vụ hệ thống
+Tại thư mục `src/` (nơi chứa file `docker-compose.yml`), chạy lệnh sau để build và khởi động hệ thống:
+
+```bash
+docker compose up --build -d
+```
+
+Lệnh này sẽ tự động tải các Docker image cần thiết, thiết lập cơ sở dữ liệu PostgreSQL, cơ sở dữ liệu vector Qdrant, dịch vụ Backend, Frontend và liên kết chúng lại với nhau thông qua mạng ảo nội bộ.
+
+### Bước 3: Kiểm tra trạng thái hoạt động
+Đợi khoảng 30 giây đến 1 phút để các container khởi tạo xong. Bạn có thể kiểm tra trạng thái bằng lệnh:
+```bash
+docker compose ps
+```
+If tất cả các container hiển thị trạng thái `running` hoặc `healthy`, hệ thống đã sẵn sàng hoạt động.
+
+### Bước 4: Truy cập ứng dụng
+*   **Giao diện ứng dụng (Frontend)**: Truy cập qua trình duyệt tại địa chỉ [http://localhost:3000](http://localhost:3000)
+*   **Tài liệu API (Swagger UI)**: Truy cập tại địa chỉ [http://localhost:8000/docs](http://localhost:8000/docs)
+*   **Cơ sở dữ liệu Vector Qdrant Console**: Truy cập tại địa chỉ [http://localhost:6333/dashboard](http://localhost:6333/dashboard)
+
+### Bước 5: Dừng hệ thống
+Để tắt tất cả các container mà không làm mất dữ liệu của cơ sở dữ liệu, chạy lệnh:
+```bash
+docker compose down
+```
+Nếu muốn xóa toàn bộ container và xóa sạch volume dữ liệu (reset database), hãy chạy:
+```bash
+docker compose down -v
+```
+
+---
+
+## 👥 Tài Khoản Mặc Định Đăng Nhập
+Hệ thống hỗ trợ 2 loại tài khoản mẫu sau khi khởi tạo dữ liệu:
+*   **Tài khoản Giảng viên (User)**: `teacher` / Mật khẩu: `teacher123`
+*   **Tài khoản Quản trị viên (Admin)**: `admin` / Mật khẩu: `admin123`

@@ -124,11 +124,7 @@ uploads/
 *.xlsx
 
 # Ignore untracked test scripts and test data outputs
-test_*.py
 test_debug*.py
 test_temp*.py
-# Ignore test folders
-test/
-tests/
 **/__pycache__/
 .pytest_cache/
