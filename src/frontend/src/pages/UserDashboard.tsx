@@ -243,12 +243,14 @@ export default function UserDashboard() {
       } else {
         if (pendingUser) {
           pendingUser.answer = msg.content || "";
+          pendingUser.metadata = msg.metadata || null;
           pairs.push(pendingUser);
           pendingUser = null;
         } else {
           pairs.push({
             question: "",
             answer: msg.content || "",
+            metadata: msg.metadata || null,
             timestamp: msg.created_at,
           });
         }
@@ -637,7 +639,7 @@ export default function UserDashboard() {
               {activeTab === "generate" && (
                 <>
                   <Sparkles className="text-blue-500" size={24} /> Tạo bài giảng
-                  (RAG)
+                  
                 </>
               )}
               {activeTab === "preview" && (

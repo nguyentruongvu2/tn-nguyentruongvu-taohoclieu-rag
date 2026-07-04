@@ -88,43 +88,6 @@ function inferLevelFromTitle(title: string): number {
   return Math.max(1, matched[1].split(".").length);
 }
 
-function buildPreviewMarkdown(project: PreviewProject): string {
-  const ordered = [...(project.sections || [])].sort(
-    (a, b) => (a.order_index || 0) - (b.order_index || 0),
-  );
-
-  const lines: string[] = [];
-  lines.push(`# ${project.title || "Bài giảng"}`);
-  lines.push("");
-
-  if ((project.description || "").trim()) {
-    lines.push(project.description.trim());
-    lines.push("");
-  }
-
-  for (const section of ordered) {
-    const level = Math.max(1, Math.min(5, Number(section.level || inferLevelFromTitle(section.title || ""))));
-    const headingPrefix = "#".repeat(level + 1);
-    lines.push(`${headingPrefix} ${section.title || "Mục chưa đặt tên"}`);
-    lines.push("");
-    lines.push(
-      removeDuplicateHeading(
-        (section.content_markdown || "").trim(),
-        section.title || "",
-      ),
-    );
-    lines.push("");
-  }
-
-  return `${lines.join("\n").trim()}\n`;
-}
-
-function normalizeMarkdownForPreview(text: string): string {
-  return (text || "")
-    .replace(/[ \t]+$/gm, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trimEnd();
-}
 
 export default function TeachingMaterialPreview() {
   const { id } = useParams();
@@ -143,6 +106,38 @@ export default function TeachingMaterialPreview() {
   const [exportingFormat, setExportingFormat] =
     useState<EditorProjectExportFormat | null>(null);
   const downloadMenuRef = useRef<HTMLDivElement | null>(null);
+  const projectRef = useRef<PreviewProject | null>(null);
+  const [viewMode, setViewMode] = useState<"section" | "all">(() => {
+    const sec = searchParams.get("section");
+    return sec ? "section" : "all";
+  });
+
+  const projectedSections = useMemo(() => {
+    const currentSectionId = searchParams.get("section") || "";
+    if (viewMode === "section" && currentSectionId) {
+      const target = editableSections.find((s) => s.id === currentSectionId);
+      if (target) return [target];
+    }
+    return editableSections;
+  }, [editableSections, viewMode, searchParams]);
+
+  const [renderedLimit, setRenderedLimit] = useState(2);
+
+  // Reset giới hạn render khi người dùng đổi chế độ xem hoặc khi dự án thay đổi
+  useEffect(() => {
+    setRenderedLimit(2);
+  }, [viewMode, project?.id]);
+
+  // Tăng dần số lượng section được kết xuất ngầm sau mỗi 100ms khi trình duyệt rảnh
+  useEffect(() => {
+    if (renderedLimit >= projectedSections.length) return;
+
+    const timer = setTimeout(() => {
+      setRenderedLimit((prev) => Math.min(prev + 3, projectedSections.length));
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [renderedLimit, projectedSections.length]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -150,26 +145,43 @@ export default function TeachingMaterialPreview() {
     let mounted = true;
 
     const fetchProject = async () => {
+      // 1. Dừng fetch nếu tab đang ẩn chạy ngầm để tiết kiệm tài nguyên mạng/server
+      if (typeof document !== "undefined" && document.hidden) {
+        return;
+      }
+
       try {
         const data = await getEditorProjectDetail(projectId);
         if (!mounted) return;
 
-        setProject({
-          id: data.id,
-          title: data.title,
-          description: data.description,
-          sections: data.sections || [],
-        });
-        const mapped: EditableSection[] = (data.sections || []).map((s) => ({
-          id: s.id,
-          title: s.title,
-          content: stripSourceCitations(s.content_markdown || ""),
-          order: s.order_index || 0,
-          level: s.level || inferLevelFromTitle(s.title || ""),
-        }));
-        setEditableSections(mapped);
-        setError("");
-        setLastSyncedAt(new Date().toLocaleTimeString("vi-VN"));
+        // 2. So sánh dữ liệu thực tế nhận được với dữ liệu hiện tại
+        const current = projectRef.current;
+        const hasChanged = !current || 
+          current.title !== data.title || 
+          current.description !== data.description || 
+          JSON.stringify(current.sections) !== JSON.stringify(data.sections || []);
+
+        // 3. Chỉ cập nhật state khi có thay đổi thực sự nhằm tránh React re-render vô ích gây lag CPU
+        if (hasChanged) {
+          const newProj = {
+            id: data.id,
+            title: data.title,
+            description: data.description,
+            sections: data.sections || [],
+          };
+          projectRef.current = newProj;
+          setProject(newProj);
+
+          const mapped: EditableSection[] = (data.sections || []).map((s) => ({
+            id: s.id,
+            title: s.title,
+            content: stripSourceCitations(s.content_markdown || ""),
+            order: s.order_index || 0,
+            level: s.level || inferLevelFromTitle(s.title || ""),
+          }));
+          setEditableSections(mapped);
+          setLastSyncedAt(new Date().toLocaleTimeString("vi-VN"));
+        }
       } catch (e) {
         if (!mounted) return;
         setError(
@@ -181,9 +193,10 @@ export default function TeachingMaterialPreview() {
     };
 
     void fetchProject();
+    // Tăng thời gian polling từ 2 giây lên 5 giây
     const timer = window.setInterval(() => {
       void fetchProject();
-    }, 2000);
+    }, 5000);
 
     return () => {
       mounted = false;
@@ -227,26 +240,43 @@ export default function TeachingMaterialPreview() {
         decodedSrc = decodeURIComponent(placeholderSrc);
       } catch {}
 
-      const targetSection = editableSections.find(
-        (s) => s.content.includes(decodedSrc) || s.content.includes(placeholderSrc)
+      // Find the target section from backend data (project.sections) where content_markdown contains the placeholder
+      if (!project) return;
+      const dbSection = project.sections.find(
+        (s) => (s.content_markdown || "").includes(decodedSrc) || (s.content_markdown || "").includes(placeholderSrc)
       );
 
-      if (targetSection) {
-        let updatedContent = targetSection.content;
-        if (targetSection.content.includes(decodedSrc)) {
-          updatedContent = targetSection.content.replace(decodedSrc, newSrc);
+      if (dbSection) {
+        let updatedContentMarkdown = dbSection.content_markdown || "";
+        if (updatedContentMarkdown.includes(decodedSrc)) {
+          updatedContentMarkdown = updatedContentMarkdown.replace(decodedSrc, newSrc);
         } else {
-          updatedContent = targetSection.content.replace(placeholderSrc, newSrc);
+          updatedContentMarkdown = updatedContentMarkdown.replace(placeholderSrc, newSrc);
         }
 
-        // Optimistically update local state so it renders immediately
+        // Update the project state
+        setProject((prev) => {
+          if (!prev) return prev;
+          const next = {
+            ...prev,
+            sections: prev.sections.map((s) =>
+              s.id === dbSection.id ? { ...s, content_markdown: updatedContentMarkdown } : s
+            ),
+          };
+          projectRef.current = next; // Đồng bộ Ref để tránh bị lệch data ở chu kỳ polling tiếp theo
+          return next;
+        });
+
+        // Update the editable sections (strip citations)
         setEditableSections((prev) =>
-          prev.map((s) => (s.id === targetSection.id ? { ...s, content: updatedContent } : s))
+          prev.map((s) =>
+            s.id === dbSection.id ? { ...s, content: stripSourceCitations(updatedContentMarkdown) } : s
+          )
         );
 
         try {
-          await patchEditorSection(targetSection.id, {
-            content: updatedContent,
+          await patchEditorSection(dbSection.id, {
+            content: updatedContentMarkdown,
           });
           toastService.success("Đã thay thế placeholder bằng hình ảnh thành công!");
         } catch (err) {
@@ -260,7 +290,7 @@ export default function TeachingMaterialPreview() {
     return () => {
       window.removeEventListener("replace-placeholder", handleReplacePlaceholder);
     };
-  }, [editableSections]);
+  }, [project]);
 
   const handleExportProject = async (format: EditorProjectExportFormat) => {
     if (!projectId) return;
@@ -283,23 +313,11 @@ export default function TeachingMaterialPreview() {
     }
   };
 
-  const markdown = useMemo(() => {
-    if (!project) return "";
-    const projected: PreviewProject = {
-      ...project,
-      sections: editableSections.map((s) => ({
-        id: s.id,
-        project_id: project.id,
-        title: s.title,
-        content_markdown: s.content,
-        prompt: "",
-        order_index: s.order,
-        level: s.level,
-        updated_at: "",
-      })),
-    };
-    return normalizeMarkdownForPreview(buildPreviewMarkdown(projected));
-  }, [editableSections, project]);
+
+
+
+
+
 
   const backToEditor = () => {
     const section = searchParams.get("section") || "";
@@ -327,12 +345,36 @@ export default function TeachingMaterialPreview() {
                 Xem nội dung đã lưu
               </h1>
               <p className="text-xs text-slate-500">
-                Tự động cập nhật mỗi 2 giây theo dữ liệu đã lưu
+                Tự động cập nhật mỗi 5 giây theo dữ liệu đã lưu
               </p>
             </div>
           </div>
         </div>
         <div className="flex items-center gap-4">
+          {searchParams.get("section") && (
+            <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 mr-2">
+              <button
+                onClick={() => setViewMode("section")}
+                className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${
+                  viewMode === "section"
+                    ? "bg-white text-slate-800 shadow-sm"
+                    : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                Mục hiện tại
+              </button>
+              <button
+                onClick={() => setViewMode("all")}
+                className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${
+                  viewMode === "all"
+                    ? "bg-white text-slate-800 shadow-sm"
+                    : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                Toàn bộ bài giảng
+              </button>
+            </div>
+          )}
           {lastSyncedAt && (
             <span className="text-xs text-slate-500 flex items-center gap-1">
               <RefreshCw size={12} /> Đồng bộ lúc {lastSyncedAt}
@@ -458,8 +500,47 @@ export default function TeachingMaterialPreview() {
                 margin: 0 !important;
               }
             `}</style>
-            <article className="bg-white border rounded-xl p-8 prose markdown-preview max-w-none shadow-sm">
-              <EnhancedMarkdownRenderer content={markdown} className="!p-0 !border-0 bg-transparent" />
+            <article className="bg-white border rounded-xl p-8 prose markdown-preview max-w-none shadow-sm space-y-8">
+              <h1 className="font-extrabold text-blue-800 border-b-[3px] border-blue-500 pb-3 mb-6" style={{ fontSize: '2.2rem' }}>
+                {project?.title || "Bài giảng"}
+              </h1>
+              {project?.description && (
+                <p className="text-slate-600 leading-relaxed mb-8">{project.description}</p>
+              )}
+
+              {/* Render các section đã tải ngầm xong */}
+              {projectedSections.slice(0, renderedLimit).map((section) => {
+                const level = Math.max(
+                  1,
+                  Math.min(
+                    5,
+                    Number(section.level || inferLevelFromTitle(section.title || ""))
+                  )
+                );
+                const headingPrefix = "#".repeat(level + 1);
+                const sectionContent = removeDuplicateHeading(
+                  (section.content || "").trim(),
+                  section.title || ""
+                );
+                const sectionMarkdown = `${headingPrefix} ${section.title || "Mục chưa đặt tên"}\n\n${sectionContent}`;
+
+                return (
+                  <EnhancedMarkdownRenderer
+                    key={section.id}
+                    content={sectionMarkdown}
+                    className="!p-0 !border-0 bg-transparent"
+                  />
+                );
+              })}
+
+              {/* Render skeleton giữ chỗ cho các section chưa render tới */}
+              {projectedSections.slice(renderedLimit).map((section) => (
+                <div key={section.id} className="space-y-3 py-4 animate-pulse">
+                  <div className="h-6 bg-slate-200 rounded w-1/4 mb-4"></div>
+                  <div className="h-4 bg-slate-100 rounded w-full"></div>
+                  <div className="h-4 bg-slate-100 rounded w-5/6"></div>
+                </div>
+              ))}
             </article>
           </div>
         )}

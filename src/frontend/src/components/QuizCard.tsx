@@ -12,9 +12,9 @@ const RED    = "#ef4444";
 
 export const TYPE_LABELS: Record<string, string> = {
   knowledge:     "Nhận biết",
-  comprehension: "Hiểu",
-  application:   "Áp dụng",
-  analysis:      "Phân tích",
+  comprehension: "Thông hiểu",
+  application:   "Vận dụng",
+  analysis:      "Vận dụng cao",
 };
 
 const TYPE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
@@ -190,9 +190,9 @@ export function QuizCard({
             }}
           >
             <option value="knowledge">Nhận biết</option>
-            <option value="comprehension">Hiểu</option>
-            <option value="application">Áp dụng</option>
-            <option value="analysis">Phân tích</option>
+            <option value="comprehension">Thông hiểu</option>
+            <option value="application">Vận dụng</option>
+            <option value="analysis">Vận dụng cao</option>
           </select>
         </div>
 

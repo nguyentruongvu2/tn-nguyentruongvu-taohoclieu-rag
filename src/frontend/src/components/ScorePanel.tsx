@@ -189,7 +189,7 @@ export function ScorePanel({ score, total, elapsed, savedId, stats, items, userA
                       >
                         <div style={{ color: "#64748b", fontWeight: 500, marginBottom: 4 }}>
                           <span style={{ fontSize: 11, color: "#94a3b8", textTransform: "uppercase", fontWeight: 700, marginRight: 6 }}>
-                            [{item.type === "knowledge" ? "Nhận biết" : item.type === "comprehension" ? "Hiểu" : item.type === "application" ? "Áp dụng" : "Phân tích"}]
+                            [{item.type === "knowledge" ? "Nhận biết" : item.type === "comprehension" ? "Thông hiểu" : item.type === "application" ? "Vận dụng" : "Vận dụng cao"}]
                           </span>
                           {item.question.length > 80 ? item.question.substring(0, 80) + "..." : item.question}
                         </div>

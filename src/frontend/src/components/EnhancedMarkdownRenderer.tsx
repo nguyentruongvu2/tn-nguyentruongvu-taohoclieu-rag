@@ -235,9 +235,26 @@ function loadStyleWithFallbacks(urls: string[], id: string): Promise<void> {
   });
 }
 
+let isKaTeXLoadedGlobally = typeof window !== "undefined" && !!window.katex;
+const katexListeners = new Set<() => void>();
+
+function notifyKaTeXLoaded() {
+  isKaTeXLoadedGlobally = true;
+  const listeners = Array.from(katexListeners);
+  katexListeners.clear();
+  listeners.forEach((listener) => {
+    try {
+      listener();
+    } catch (e) {
+      // ignore listener error
+    }
+  });
+}
+
 function loadKaTeX(): Promise<void> {
   return new Promise((resolve, reject) => {
     if (window.renderMathInElement) {
+      isKaTeXLoadedGlobally = true;
       resolve();
       return;
     }
@@ -261,12 +278,12 @@ function loadKaTeX(): Promise<void> {
     ];
 
     if (window._katexLoading) {
-      const interval = setInterval(() => {
-        if (window.renderMathInElement) {
-          clearInterval(interval);
-          resolve();
-        }
-      }, 100);
+      if (isKaTeXLoadedGlobally) {
+        resolve();
+        return;
+      }
+      const listener = () => resolve();
+      katexListeners.add(listener);
       return;
     }
     window._katexLoading = true;
@@ -276,6 +293,7 @@ function loadKaTeX(): Promise<void> {
       .then(() => loadScriptWithFallbacks(autoRenderCDNs))
       .then(() => {
         window.renderMathInElement = (window as any).renderMathInElement;
+        notifyKaTeXLoaded();
         resolve();
       })
       .catch((err) => {
@@ -290,17 +308,15 @@ function loadKaTeX(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 function MathRenderer({ latex, inline }: { latex: string; inline: boolean }) {
-  const [katexLoaded, setKatexLoaded] = useState(() => typeof window !== "undefined" && !!window.katex);
+  const [katexLoaded, setKatexLoaded] = useState(isKaTeXLoadedGlobally);
 
   useEffect(() => {
     if (katexLoaded) return;
-    const interval = setInterval(() => {
-      if (typeof window !== "undefined" && window.katex) {
-        setKatexLoaded(true);
-        clearInterval(interval);
-      }
-    }, 100);
-    return () => clearInterval(interval);
+    const listener = () => setKatexLoaded(true);
+    katexListeners.add(listener);
+    return () => {
+      katexListeners.delete(listener);
+    };
   }, [katexLoaded]);
 
   if (!katexLoaded) {
@@ -323,7 +339,7 @@ function MathRenderer({ latex, inline }: { latex: string; inline: boolean }) {
   }
 }
 
-export function EnhancedMarkdownRenderer({
+function EnhancedMarkdownRendererInternal({
   content,
   components = {},
   className = "",
@@ -334,9 +350,15 @@ export function EnhancedMarkdownRenderer({
   const processedContent = useMemo(() => {
     if (!content) return "";
     const wrappedPlaceholders = content.replace(
-      /!\s*\[([^\]]*)\]\(\s*(<?\/?placeholder:(?:[^\(\)]*|\([^)]*\))*>?)\s*\)/g,
+      /!\s*\[([^\]]*)\][\s\n\r]*\(\s*(<?\/?placeholder:[^\)\n\r]*>?)\s*\)/g,
       (_, alt, path) => {
         let cleanPath = path.trim();
+        // Decode URL to clear any pre-existing %20 or encoded characters
+        try {
+          cleanPath = decodeURIComponent(cleanPath);
+        } catch (e) {
+          // ignore
+        }
         if (cleanPath.startsWith("<") && cleanPath.endsWith(">")) {
           cleanPath = cleanPath.slice(1, -1);
         }
@@ -351,8 +373,6 @@ export function EnhancedMarkdownRenderer({
     );
     return convertMathToCodeBlocks(wrappedPlaceholders);
   }, [content]);
-
-  // Load KaTeX CSS and JS once on mount
   useEffect(() => {
     loadKaTeX().catch((err) => {
       console.error("Failed to load KaTeX on mount:", err);
@@ -659,6 +679,8 @@ export function EnhancedMarkdownRenderer({
     </div>
   );
 }
+
+export const EnhancedMarkdownRenderer = React.memo(EnhancedMarkdownRendererInternal);
 
 // ---------------------------------------------------------------------------
 // Utility: escape underscores, asterisks, and double backslashes in math blocks

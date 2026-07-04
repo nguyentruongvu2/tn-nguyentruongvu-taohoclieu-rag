@@ -3,17 +3,27 @@ import { Plus, X, ChevronDown, Check, User, Sparkles, BookOpen, Send, StopCircle
 import MarkdownViewer from './MarkdownViewer';
 
 const formatMessageCitations = (content: string, sources?: any[]) => {
-  if (!sources || sources.length === 0) return content;
-  return content.replace(/\[Source\s*(\d+)\]/gi, (match, p1) => {
-    const idx = parseInt(p1, 10);
-    const src = sources[idx - 1];
-    if (src) {
-      const filename = src.title || src.source || "";
-      const displayName = filename.length > 25 ? filename.slice(0, 22) + "..." : filename;
-      const pageInfo = src.page_number && src.page_number > 0 ? `, Tr. ${src.page_number}` : "";
-      return `[[${idx}] ${displayName}${pageInfo}](ref-${idx})`;
-    }
-    return match;
+  if (!sources || sources.length === 0) {
+    // Xóa hoàn toàn các thẻ trích dẫn thô và các khoảng trắng thừa đứng trước nó nếu không có nguồn tham khảo đi kèm
+    return content.replace(/\s*\[Source\s*[\d\s,]+\]/gi, "");
+  }
+  
+  // Match [Source 1] hoặc [Source 1, 2] hoặc [Source 1, 2, 3] etc.
+  return content.replace(/\[Source\s*([\d\s,]+)\]/gi, (match, p1) => {
+    const indices = p1.split(",").map((s: string) => parseInt(s.trim(), 10)).filter((n: number) => !isNaN(n));
+    if (indices.length === 0) return match;
+    
+    const formattedRefs = indices.map((idx: number) => {
+      const src = sources[idx - 1];
+      if (src) {
+        // Chỉ hiển thị số thứ tự trích dẫn gọn gàng dạng [1], [2] giống Wikipedia/bài báo khoa học
+        return `[${idx}](ref-${idx})`;
+      }
+      return "";
+    }).filter((s: string) => s !== "");
+    
+    if (formattedRefs.length === 0) return "";
+    return formattedRefs.join(", ");
   });
 };
 

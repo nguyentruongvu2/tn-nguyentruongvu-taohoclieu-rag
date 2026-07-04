@@ -112,7 +112,10 @@ export const handleError = (error: AxiosError): string => {
       const isAuthEndpoint = url.includes("auth/login") || url.includes("auth/register") || url.includes("/login") || url.includes("/register");
       if (isAuthEndpoint) {
         if (data?.message) return data.message;
-        if (data?.detail && typeof data.detail === "string") return data.detail;
+        if (data?.detail) {
+          if (typeof data.detail === "string") return data.detail;
+          if (typeof data.detail === "object" && data.detail.message) return data.detail.message;
+        }
       }
       return "Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại.";
     }

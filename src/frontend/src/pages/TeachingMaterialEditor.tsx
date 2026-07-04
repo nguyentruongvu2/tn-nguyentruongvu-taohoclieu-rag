@@ -509,21 +509,21 @@ function normalizeSectionEvaluation(
 // --- Markdown Bloom Badge Processor ---
 function renderBloomBadge(text: string): React.ReactNode {
   if (!text) return text;
-  const bloomRegex = /(🎯\s*Mục tiêu:\s*(?:Nhận biết|Hiểu|Áp dụng|Phân tích|Đánh giá|Sáng tạo))/i;
+  const bloomRegex = /(🎯\s*Mục tiêu:\s*(?:Nhận biết|Thông hiểu|Hiểu|Vận dụng cao|Vận dụng|Áp dụng|Phân tích|Đánh giá|Sáng tạo))/i;
   const parts = text.split(bloomRegex);
   
   if (parts.length === 1) return text;
 
   return parts.map((part, i) => {
-    const match = part.match(/🎯\s*Mục tiêu:\s*(Nhận biết|Hiểu|Áp dụng|Phân tích|Đánh giá|Sáng tạo)/i);
+    const match = part.match(/🎯\s*Mục tiêu:\s*(Nhận biết|Thông hiểu|Hiểu|Vận dụng cao|Vận dụng|Áp dụng|Phân tích|Đánh giá|Sáng tạo)/i);
     if (match) {
       const level = match[1].toLowerCase();
       let colorClass = "bg-slate-100 text-slate-800 border-slate-200";
       
       if (level === "nhận biết") colorClass = "bg-purple-100 text-purple-700 border-purple-200";
-      else if (level === "hiểu") colorClass = "bg-emerald-100 text-emerald-700 border-emerald-200";
-      else if (level === "áp dụng") colorClass = "bg-blue-100 text-blue-700 border-blue-200";
-      else if (level === "phân tích") colorClass = "bg-amber-100 text-amber-700 border-amber-200";
+      else if (level === "thông hiểu" || level === "hiểu") colorClass = "bg-emerald-100 text-emerald-700 border-emerald-200";
+      else if (level === "vận dụng" || level === "áp dụng") colorClass = "bg-blue-100 text-blue-700 border-blue-200";
+      else if (level === "vận dụng cao" || level === "phân tích") colorClass = "bg-amber-100 text-amber-700 border-amber-200";
       else if (level === "đánh giá") colorClass = "bg-rose-100 text-rose-700 border-rose-200";
       else if (level === "sáng tạo") colorClass = "bg-indigo-100 text-indigo-700 border-indigo-200";
 
@@ -718,10 +718,12 @@ export default function TeachingMaterialEditor() {
     return Math.max(1, matched[1].split(".").length);
   };
 
-  const loadProject = useCallback(async () => {
+  const loadProject = useCallback(async (showLoader = true) => {
     if (!projectId) return;
     try {
-      setLoading(true);
+      if (showLoader) {
+        setLoading(true);
+      }
       setError("");
       const project = await getEditorProjectDetail(projectId);
 
@@ -1660,7 +1662,7 @@ export default function TeachingMaterialEditor() {
         prompt: "",
         order: afterOrder + 1,
       });
-      await loadProject();
+      await loadProject(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không chèn được section");
     }
@@ -1670,7 +1672,7 @@ export default function TeachingMaterialEditor() {
     try {
       await flushPendingSavesAndWait();
       await deleteEditorSection(sectionId);
-      await loadProject();
+      await loadProject(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không xóa được section");
     }
@@ -1727,7 +1729,12 @@ export default function TeachingMaterialEditor() {
     } catch {
       // Keep navigation available even if sync fails once.
     } finally {
-      navigate("/?tab=generate");
+      if (isOutlineApproved) {
+        setIsOutlineApproved(false);
+        localStorage.setItem(`rag.outline.approved.${projectId}`, "false");
+      } else {
+        navigate("/?tab=generate");
+      }
     }
   };
 
@@ -2037,7 +2044,7 @@ export default function TeachingMaterialEditor() {
               <div className="flex items-start justify-between border-b border-slate-100 pb-5 mb-6">
                 <div>
                   <h2 className="text-xl font-extrabold text-slate-800 font-display">
-                    📋 Bước 1: Phê duyệt Cấu trúc Mục lục
+                    📋 Phê duyệt Cấu trúc Mục lục
                   </h2>
                   <p className="text-slate-500 text-xs mt-1.5 leading-relaxed">
                     Kiểm tra khung cấu trúc chương/bài dưới đây. Kéo thả để sắp xếp lại, hoặc chọn một đề mục để làm mục cha để chèn các tiểu mục con mới ngay dưới mục đó.

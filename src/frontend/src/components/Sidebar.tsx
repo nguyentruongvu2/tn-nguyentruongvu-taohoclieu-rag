@@ -42,9 +42,6 @@ export default function Sidebar({
               <h1 className="text-lg font-bold text-gray-900 leading-tight">
                 EduRAG
               </h1>
-              <p className="text-xs text-gray-500 font-medium tracking-wide">
-                Học liệu & RAG
-              </p>
             </div>
           </div>
           <button
@@ -102,7 +99,7 @@ export default function Sidebar({
                 activeTab === "generate" ? "text-blue-600" : "text-gray-400"
               }
             />{" "}
-            Tạo bài giảng (RAG)
+            Tạo bài giảng
           </button>
           <button
             onClick={() => {
