@@ -2337,6 +2337,24 @@ def _parse_section_json_response(raw: str) -> tuple[str, str]:
         except Exception:
             pass
 
+    # ── Fallback regex for unescaped LaTeX backslashes ──
+    # Extracts the content string value directly, bypassing strict JSON string load to preserve LaTeX
+    content_match = re.search(r'"content"\s*:\s*"([\s\S]*?)"\s*(?:,\s*"sentinel"|\})', cleaned)
+    if content_match:
+        try:
+            content_val = content_match.group(1)
+            # Unescape standard JSON string escapes but preserve raw LaTeX backslashes
+            content_val = content_val.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t').replace('\\\\', '\\')
+            sentinel = ""
+            sentinel_match = re.search(r'"sentinel"\s*:\s*"([^"]*)"', cleaned)
+            if sentinel_match:
+                sentinel_raw = sentinel_match.group(1).strip().upper()
+                if sentinel_raw in {"NOT_ENOUGH_CONTEXT", "FAIL_COVERAGE"}:
+                    sentinel = sentinel_raw
+            return content_val.strip(), sentinel
+        except Exception:
+            pass
+
     # If the text itself looks like a raw JSON object string representation but failed parsing,
     # let's try to unescape it or clean up quotes.
     if text.startswith("{") and text.endswith("}"):

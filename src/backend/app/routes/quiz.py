@@ -125,12 +125,18 @@ def _detect_bloom_levels_from_instruction(instruction: str) -> list[str]:
         detected.append("knowledge")
     if any(k in stripped for k in ["thong hieu", "hieu", "comprehension"]):
         detected.append("comprehension")
-    if any(k in stripped for k in ["ap dung", "van dung", "application"]):
-        detected.append("application")
-    if any(k in stripped for k in ["phan tich", "analysis"]):
+        
+    # Check for "van dung cao" first to avoid matching "van dung"
+    is_vdc = "van dung cao" in stripped or "vdc" in stripped or "phan tich" in stripped or "analysis" in stripped
+    
+    if is_vdc:
         detected.append("analysis")
         
+    if not is_vdc and any(k in stripped for k in ["ap dung", "van dung", "application"]):
+        detected.append("application")
+        
     return detected
+
 
 
 def _build_prompt(content: str, n: int, seed: int, bloom_level: str = "mix", custom_instruction: str = "") -> str:

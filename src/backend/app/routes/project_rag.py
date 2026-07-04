@@ -1007,8 +1007,7 @@ async def generate_section_endpoint(
         retrieved_chunks=retrieved,
         selected_source_docs=source_docs,
     )
-    if is_main_content:
-        content = _compact_markdown_spacing(content, max_blank_lines=1)
+    content = _compact_markdown_spacing(content, max_blank_lines=1)
     if not content:
         raise HTTPException(status_code=422, detail="Empty generated content")
 
@@ -1429,6 +1428,65 @@ async def edit_selection_endpoint(
     }
 
 
+def _parse_suggested_prompts_json(raw: str) -> dict[str, Any] | None:
+    """Robustly parse LLM output JSON for prompt suggestions.
+    
+    Handles unescaped double quotes and LaTeX backslashes inside JSON strings.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+
+    cleaned = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+
+    # Try strict parse first
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        pass
+
+    # Regex-based extraction of fields if strict parse fails
+    try:
+        topic_match = re.search(r'"topic"\s*:\s*"([\s\S]*?)"\s*,', cleaned)
+        topic = topic_match.group(1).strip() if topic_match else ""
+
+        keywords_match = re.search(r'"keywords"\s*:\s*\[([\s\S]*?)\]', cleaned)
+        keywords = []
+        if keywords_match:
+            kw_raw = keywords_match.group(1)
+            keywords = [k.strip('" ').replace('\\"', '"') for k in re.findall(r'"[\s\S]*?"', kw_raw)]
+
+        # Find all suggestion blocks
+        suggestions = []
+        suggestions_match = re.search(r'"suggestions"\s*:\s*\[([\s\S]*?)\]', cleaned)
+        if suggestions_match:
+            sug_array_content = suggestions_match.group(1)
+            blocks = re.findall(r'\{([\s\S]*?)\}', sug_array_content)
+            for b in blocks:
+                type_m = re.search(r'"type"\s*:\s*"([\s\S]*?)"', b)
+                title_m = re.search(r'"title"\s*:\s*"([\s\S]*?)"', b)
+                prompt_m = re.search(r'"prompt"\s*:\s*"([\s\S]*?)"', b)
+
+                if type_m and title_m and prompt_m:
+                    suggestions.append({
+                        "type": type_m.group(1).replace('\\"', '"').strip(),
+                        "title": title_m.group(1).replace('\\"', '"').strip(),
+                        "prompt": prompt_m.group(1).replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t').replace('\\\\', '\\').strip()
+                    })
+
+        if topic or keywords or suggestions:
+            return {
+                "topic": topic.replace('\\"', '"'),
+                "keywords": keywords,
+                "suggestions": suggestions
+            }
+    except Exception:
+        pass
+
+    return None
+
+
 @router.post("/projects/{project_id}/sections/{section_id}/suggest-prompt")
 async def suggest_section_prompt_endpoint(
     project_id: str,
@@ -1587,17 +1645,10 @@ async def suggest_section_prompt_endpoint(
             context_text,
             f"{suggest_prompt_system}\n\n{user_prompt}"
         )
-        import json
-        clean_json = (suggested_raw or "").strip()
-        if clean_json.startswith("```"):
-            lines = clean_json.split("\n")
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines[-1].startswith("```"):
-                lines = lines[:-1]
-            clean_json = "\n".join(lines).strip()
-        
-        parsed_payload = json.loads(clean_json)
+        parsed_payload = _parse_suggested_prompts_json(suggested_raw)
+        if not parsed_payload:
+            raise ValueError("Robust JSON parsing failed")
+
         types_generated = {s["type"] for s in parsed_payload.get("suggestions", [])}
         for fb in fallback_suggestions:
             if fb["type"] not in types_generated:
