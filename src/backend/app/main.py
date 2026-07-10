@@ -138,6 +138,20 @@ async def lifespan(app: FastAPI):
             "Bootstrapped default admin account: %s / [configured password] (change in production)",
             admin_email,
         )
+
+    # Bootstrap default teacher for local/dev usage if none exists yet.
+    from .auth_db import get_user_by_username
+    if not get_user_by_username("teacher"):
+        create_user(
+            "teacher",
+            hash_password("teacher123"),
+            role="user",
+            email="teacher@local.test",
+            status="active",
+        )
+        logger.warning(
+            "Bootstrapped default teacher account: teacher@local.test / teacher123"
+        )
     yield
     # Shutdown
     logger.info("Document Processing API shutting down...")

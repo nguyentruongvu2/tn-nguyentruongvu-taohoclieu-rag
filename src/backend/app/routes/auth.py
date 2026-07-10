@@ -22,6 +22,7 @@ from ..auth_db import (
     list_users,
     set_user_active,
     update_user_profile,
+    get_admin_dashboard_stats,
 )
 from ..auth_service import (
     login_user,
@@ -216,9 +217,27 @@ async def admin_users(_: dict = Depends(require_admin)):
     return {"success": True, "users": list_users()}
 
 
+@router.get("/admin/stats")
+async def admin_stats(_: dict = Depends(require_admin)):
+    stats = get_admin_dashboard_stats()
+    return {"success": True, "stats": stats}
+
+
 @router.get("/admin/documents")
 async def admin_documents(admin_user: dict = Depends(require_admin)):
     docs = list_documents(user_id=admin_user["id"], role="admin")
+    # Dynamically read file size from disk for each document
+    for doc in docs:
+        file_path = doc.get("stored_file_path")
+        file_size = 0
+        if file_path:
+            try:
+                p = Path(file_path)
+                if p.exists():
+                    file_size = p.stat().st_size
+            except Exception:
+                pass
+        doc["file_size"] = file_size
     return {"success": True, "documents": docs}
 
 

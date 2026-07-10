@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { EnhancedMarkdownRenderer } from "../components/EnhancedMarkdownRenderer";
-import { ChevronDown, Download, Eye, RefreshCw } from "lucide-react";
+import { ChevronDown, Download, Eye, RefreshCw, ArrowLeft } from "lucide-react";
 import {
   exportEditorProject,
   getEditorProjectDetail,
@@ -333,29 +333,30 @@ export default function TeachingMaterialPreview() {
         <div className="flex items-center gap-4">
           <button
             onClick={backToEditor}
-            className="px-3.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold transition-colors flex items-center gap-1 border border-slate-200"
+            className="flex items-center gap-2 h-9 px-3 text-slate-500 hover:text-slate-800 hover:bg-slate-100 active:bg-slate-200 rounded-lg font-medium transition-all duration-200 shrink-0 text-sm focus:outline-none focus:ring-2 focus:ring-slate-500/10"
           >
-            ← Quay lại
+            <ArrowLeft size={16} />
+            <span>Quay lại</span>
           </button>
           <div className="h-5 w-px bg-slate-200"></div>
           <div className="flex items-center gap-3">
             <Eye size={20} className="text-blue-600" />
             <div>
-              <h1 className="font-semibold text-slate-800">
+              <h1 className="font-semibold text-slate-800 leading-tight">
                 Xem nội dung đã lưu
               </h1>
-              <p className="text-xs text-slate-500">
+              <p className="text-[10px] text-slate-500 mt-0.5">
                 Tự động cập nhật mỗi 5 giây theo dữ liệu đã lưu
               </p>
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           {searchParams.get("section") && (
-            <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 mr-2">
+            <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 mr-2 h-9">
               <button
                 onClick={() => setViewMode("section")}
-                className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${
+                className={`px-3 h-8 flex items-center justify-center rounded-md text-xs font-semibold transition-all ${
                   viewMode === "section"
                     ? "bg-white text-slate-800 shadow-sm"
                     : "text-slate-500 hover:text-slate-800"
@@ -365,7 +366,7 @@ export default function TeachingMaterialPreview() {
               </button>
               <button
                 onClick={() => setViewMode("all")}
-                className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${
+                className={`px-3 h-8 flex items-center justify-center rounded-md text-xs font-semibold transition-all ${
                   viewMode === "all"
                     ? "bg-white text-slate-800 shadow-sm"
                     : "text-slate-500 hover:text-slate-800"
@@ -376,7 +377,7 @@ export default function TeachingMaterialPreview() {
             </div>
           )}
           {lastSyncedAt && (
-            <span className="text-xs text-slate-500 flex items-center gap-1">
+            <span className="text-xs text-slate-500 flex items-center gap-1.5 mr-2">
               <RefreshCw size={12} /> Đồng bộ lúc {lastSyncedAt}
             </span>
           )}
@@ -384,23 +385,21 @@ export default function TeachingMaterialPreview() {
             <button
               onClick={() => setIsDownloadMenuOpen((prev) => !prev)}
               disabled={Boolean(exportingFormat)}
-              className="px-3 py-1.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm disabled:opacity-50"
+              className="flex items-center gap-1.5 h-9 px-3.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-lg font-medium transition duration-200 text-sm shadow-sm hover:shadow focus:outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60"
             >
-              <span className="inline-flex items-center gap-1">
-                <Download size={14} />
-                {exportingFormat ? "Đang tải..." : "Tải về"}
-                <ChevronDown size={14} />
-              </span>
+              <Download size={15} />
+              <span>{exportingFormat ? "Đang tải..." : "Tải về"}</span>
+              <ChevronDown size={14} className={`transition-transform duration-200 ${isDownloadMenuOpen ? 'rotate-180' : ''}`} />
             </button>
 
             {isDownloadMenuOpen && (
-              <div className="absolute right-0 top-full mt-2 min-w-[150px] rounded-md border border-slate-200 bg-white shadow-lg z-30 overflow-hidden">
+              <div className="absolute right-0 top-full mt-2 w-48 rounded-xl border border-slate-200 bg-white shadow-xl z-30 overflow-hidden p-1.5 animate-in fade-in slide-in-from-top-2 duration-150">
                 {EXPORT_FORMATS.map((format) => (
                   <button
                     key={format}
                     onClick={() => void handleExportProject(format)}
                     disabled={Boolean(exportingFormat)}
-                    className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                    className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 rounded-lg transition duration-150 disabled:opacity-60"
                   >
                     {EXPORT_LABELS[format]}
                   </button>

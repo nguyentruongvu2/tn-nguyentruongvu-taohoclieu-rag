@@ -350,7 +350,7 @@ function EnhancedMarkdownRendererInternal({
   const processedContent = useMemo(() => {
     if (!content) return "";
     const wrappedPlaceholders = content.replace(
-      /!\s*\[([^\]]*)\][\s\n\r]*\(\s*(<?\/?placeholder:[^\)\n\r]*>?)\s*\)/g,
+      /!\s*\[([^\]]*)\][\s\n\r]*\(\s*(<\/?placeholder:[^>\n\r]*>|\/?placeholder:[^\)\n\r]*)\s*\)/g,
       (_, alt, path) => {
         let cleanPath = path.trim();
         // Decode URL to clear any pre-existing %20 or encoded characters
@@ -537,9 +537,23 @@ function EnhancedMarkdownRendererInternal({
 
     // ── Image or Placeholder ──────────────────────────────────────────────
     img: ({ src, alt }) => {
-      const isPlaceholder = src?.startsWith("placeholder:");
+      let isPlaceholder = src?.startsWith("placeholder:") || false;
+      let cleanSrc = src || "";
+      if (!isPlaceholder && src) {
+        const lower = src.toLowerCase();
+        if (
+          lower.includes("vector art") ||
+          lower.includes("clean design") ||
+          lower.includes("white background") ||
+          lower.includes("no text clutter") ||
+          (src.startsWith("[") && src.endsWith("]"))
+        ) {
+          isPlaceholder = true;
+          cleanSrc = "placeholder:Sơ đồ gợi ý | " + src.replace(/[\[\]]/g, "");
+        }
+      }
       if (src && isPlaceholder) {
-        const rawDescription = src.substring("placeholder:".length).trim();
+        const rawDescription = cleanSrc.substring("placeholder:".length).trim();
         let decodedDescription = rawDescription;
         try {
           decodedDescription = decodeURIComponent(rawDescription);

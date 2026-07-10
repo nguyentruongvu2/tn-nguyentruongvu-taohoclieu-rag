@@ -173,11 +173,11 @@ async def secure_upload(
 
     file_ext = os.path.splitext(file.filename or "")[1].lower()
     if file_ext not in {".pdf", ".docx"}:
-        raise HTTPException(status_code=400, detail="Secure upload supports PDF or DOCX")
+        raise HTTPException(status_code=400, detail="Chỉ hỗ trợ tải lên tệp tin định dạng PDF hoặc DOCX")
 
     data = await file.read()
     if len(data) > 100 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="File too large (limit 100MB)")
+        raise HTTPException(status_code=413, detail="Tệp tin quá lớn (giới hạn 100MB)")
 
     user_dir = USER_UPLOAD_ROOT / str(current_user["id"])
     user_dir.mkdir(parents=True, exist_ok=True)
@@ -234,12 +234,12 @@ async def secure_reprocess_document(
     enforce_rate_limit(current_user["id"])
     doc = get_document_for_user(document_id, current_user["id"], current_user["role"])
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
 
     stored_file_path = str(doc.get("stored_file_path") or "").strip()
     stored_path = Path(stored_file_path).resolve()
     if not stored_path.exists():
-        raise HTTPException(status_code=404, detail="Stored file not found")
+        raise HTTPException(status_code=404, detail="Không tìm thấy tệp tin được lưu trữ")
 
     file_ext = stored_path.suffix.lower()
     source_tag = str(doc.get("source_tag") or "")
@@ -295,7 +295,7 @@ async def secure_delete_document(
     enforce_rate_limit(current_user["id"])
     doc = get_document_for_user(document_id, current_user["id"], current_user["role"])
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
 
     source_tag = str(doc.get("source_tag") or "")
     collection_name = str(doc.get("collection_name") or "") or None
@@ -327,7 +327,7 @@ async def secure_document_references(
     enforce_rate_limit(current_user["id"])
     doc = get_document_for_user(document_id, current_user["id"], current_user["role"])
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
 
     from ..auth_db import get_projects_referencing_document
     projects = get_projects_referencing_document(document_id, current_user["id"])
@@ -343,7 +343,7 @@ async def secure_document_detail(
     enforce_rate_limit(current_user["id"])
     doc = get_document_for_user(document_id, current_user["id"], current_user["role"])
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
 
     source_tag = str(doc.get("source_tag") or "")
     collection_name = str(doc.get("collection_name") or "") or None
@@ -374,7 +374,7 @@ async def secure_document_preview(
     enforce_rate_limit(current_user["id"])
     doc = get_document_for_user(document_id, current_user["id"], current_user["role"])
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
 
     stored_path = Path(str(doc.get("stored_file_path") or "")).resolve()
     if not stored_path.exists():
@@ -391,7 +391,7 @@ async def secure_generate(
     enforce_rate_limit(current_user["id"])
     doc = get_document_for_user(request.document_id, current_user["id"], current_user["role"])
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
 
     mode = request.mode.strip().lower()
     markdown = str(doc.get("markdown") or "")

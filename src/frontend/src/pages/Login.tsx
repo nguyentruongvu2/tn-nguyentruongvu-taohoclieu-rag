@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { Mail, Lock, ArrowRight, Eye, EyeOff, Check } from "lucide-react";
+import { Mail, Lock, ArrowRight, Eye, EyeOff } from "lucide-react";
 import { loginUser } from "../services/api";
 import { toastService } from "../services/toastService";
 import { AuthLayout } from "../components/Auth/AuthLayout";
@@ -21,7 +21,7 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
+  const rememberMe = true;
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
@@ -93,6 +93,14 @@ export default function Login() {
             onRightIconClick={() => setShowPassword((value) => !value)}
             required
           />
+          <div className="flex justify-end mt-1">
+            <Link
+              to="/forgot-password"
+              className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 hover:underline"
+            >
+              Quên mật khẩu?
+            </Link>
+          </div>
         </div>
 
         {error && (
@@ -102,25 +110,7 @@ export default function Login() {
           </div>
         )}
 
-        <div className="mb-2 flex w-full items-center justify-between py-2 text-left">
-          <label className="group flex cursor-pointer items-center gap-2">
-            <div className="relative flex h-4 w-4 items-center justify-center rounded border border-gray-300 transition-colors group-hover:border-indigo-400 peer-checked:border-indigo-600 peer-checked:bg-indigo-600">
-              <input
-                type="checkbox"
-                className="peer sr-only"
-                checked={rememberMe}
-                onChange={(e) => setRememberMe(e.target.checked)}
-              />
-              <Check
-                size={12}
-                className="absolute text-white opacity-0 transition-opacity peer-checked:opacity-100"
-              />
-            </div>
-            <span className="select-none text-sm text-gray-600">
-              Ghi nhớ đăng nhập
-            </span>
-          </label>
-        </div>
+
 
         <AuthButton
           type="submit"

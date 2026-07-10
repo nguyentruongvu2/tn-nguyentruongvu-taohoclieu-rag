@@ -804,12 +804,19 @@ def _render_project_pdf_bytes(project: dict[str, Any]) -> bytes:
 
     def _process_pdf_paragraph(text: str, body_style: ParagraphStyle) -> list[Any]:
         stripped = text.strip()
-        img_match = re.match(r"^!\[(.*?)\]\(\s*<?(placeholder:[^)>]*|http[s]?://[^)>]+)>?\s*\)$", stripped)
+        img_match = re.match(r"^!\[(.*?)\]\(\s*<?/?([^)>]+)>?\s*\)$", stripped)
         if img_match:
             alt = img_match.group(1)
             path = img_match.group(2).strip()
             
-            if path.startswith("placeholder:"):
+            is_placeholder = path.startswith("placeholder:")
+            if not is_placeholder:
+                lower_path = path.lower()
+                if any(k in lower_path for k in ["vector art", "clean design", "white background", "no text clutter"]) or (path.startswith("[") and path.endswith("]")):
+                    is_placeholder = True
+                    path = "placeholder:Hình vẽ gợi ý | " + path.strip("[]")
+            
+            if is_placeholder:
                 desc = path[len("placeholder:"):].strip()
                 parts = desc.split("|")
                 raw_vi = parts[0] or ""
@@ -875,12 +882,19 @@ def _render_project_pdf_bytes(project: dict[str, Any]) -> bytes:
                     
         inline_images = re.findall(r'(!\[.*?\]\(\s*(?:<.*?>|.*?)\s*\))', html_text)
         for img_syntax in inline_images:
-            match = re.match(r'!\[(.*?)\]\(\s*<?(placeholder:[^)>]*|http[s]?://[^)>]+)>?\s*\)', img_syntax)
+            match = re.match(r'!\[(.*?)\]\(\s*<?/?([^)>]+)>?\s*\)', img_syntax)
             if match:
                 alt = match.group(1)
                 path = match.group(2).strip()
                 
-                if path.startswith("placeholder:"):
+                is_placeholder = path.startswith("placeholder:")
+                if not is_placeholder:
+                    lower_path = path.lower()
+                    if any(k in lower_path for k in ["vector art", "clean design", "white background", "no text clutter"]) or (path.startswith("[") and path.endswith("]")):
+                        is_placeholder = True
+                        path = "placeholder:Hình vẽ gợi ý | " + path.strip("[]")
+                
+                if is_placeholder:
                     html_text = html_text.replace(img_syntax, f"<b>📊 [Khung ảnh gợi ý: {html.escape(alt)}]</b>")
                 else:
                     img_bytes = _fetch_image_bytes(path)
@@ -1320,11 +1334,17 @@ def _render_project_docx_bytes(project: dict[str, Any]) -> bytes:
         for part in parts:
             if not part:
                 continue
-            img_match = re.match(r'^!\[(.*?)\]\(\s*<?(placeholder:[^)>]*|http[s]?://[^)>]+)>?\s*\)$', part.strip())
+            img_match = re.match(r'^!\[(.*?)\]\(\s*<?/?([^)>]+)>?\s*\)$', part.strip())
             if img_match:
                 alt = img_match.group(1)
                 path = img_match.group(2).strip()
-                if path.startswith("placeholder:"):
+                is_placeholder = path.startswith("placeholder:")
+                if not is_placeholder:
+                    lower_path = path.lower()
+                    if any(k in lower_path for k in ["vector art", "clean design", "white background", "no text clutter"]) or (path.startswith("[") and path.endswith("]")):
+                        is_placeholder = True
+                        path = "placeholder:Hình vẽ gợi ý | " + path.strip("[]")
+                if is_placeholder:
                     run = p.add_run(f"📊 [Khung ảnh gợi ý: {alt}]")
                     run.bold = True
                     run.font.color.rgb = RGBColor(0x08, 0x91, 0xb2)
@@ -1602,11 +1622,17 @@ def _render_project_docx_bytes(project: dict[str, Any]) -> bytes:
             stripped = text.strip()
             
             # Check block image / placeholder
-            img_match = re.match(r"^!\[(.*?)\]\(\s*<?(placeholder:[^)>]*|http[s]?://[^)>]+)>?\s*\)$", stripped)
+            img_match = re.match(r"^!\[(.*?)\]\(\s*<?/?([^)>]+)>?\s*\)$", stripped)
             if img_match:
                 alt = img_match.group(1)
                 path = img_match.group(2).strip()
-                if path.startswith("placeholder:"):
+                is_placeholder = path.startswith("placeholder:")
+                if not is_placeholder:
+                    lower_path = path.lower()
+                    if any(k in lower_path for k in ["vector art", "clean design", "white background", "no text clutter"]) or (path.startswith("[") and path.endswith("]")):
+                        is_placeholder = True
+                        path = "placeholder:Hình vẽ gợi ý | " + path.strip("[]")
+                if is_placeholder:
                     desc = path[len("placeholder:"):].strip()
                     from urllib.parse import unquote
                     try:
@@ -2135,7 +2161,7 @@ def _detect_cross_section_leakage(section_title: str, markdown_text: str) -> lis
                 label = numbered.group(1).strip()
             else:
                 chapter_like = re.match(
-                    r"^\s*(?:chapter|part|section|chuong|chương|phan|phần)\s*[:\-]?\s*\d*(?:\.\d+)*\s*[:\-]?\s*(.+?)\s*$",
+                    r"^\s*(?:chapter|part|section|chuong|chương|phan|phần)(?:\s+(?:\d+(?:\.\d+)*|(?:[ivxlcdmIVXLCDM]+|[a-zA-Z0-9])(?=\s|[:\-.]|$))|\s*[:\-]\s*)(.+?)\s*$",
                     raw_line,
                     flags=re.IGNORECASE,
                 )
@@ -2413,7 +2439,7 @@ def _detect_structure_lock_violations(markdown_text: str) -> list[str]:
             issues.append("forbidden numeric heading prefix")
             continue
 
-        if re.match(r"^(?:chapter|part|section|chuong|chương|phan|phần)\b", line, flags=re.IGNORECASE):
+        if re.match(r"^(?:chapter|part|section|chuong|chương|phan|phần)(?:\s+(?:\d+(?:\.\d+)*|(?:[ivxlcdmIVXLCDM]+|[a-zA-Z0-9])(?=\s|[:\-.]|$))|\s*[:\-]\s*)", line, flags=re.IGNORECASE):
             issues.append("forbidden chapter/part heading prefix")
 
     return list(dict.fromkeys(issues))
@@ -2438,7 +2464,7 @@ def _apply_structure_lock(markdown_text: str) -> str:
             heading_text = heading_match.group(2).strip()
             heading_text = re.sub(r"^\d+(?:\.\d+)*(?:[\.)-])?\s+", "", heading_text)
             heading_text = re.sub(
-                r"^(?:chapter|part|section|chuong|chương|phan|phần)\s*[:\-]?\s*\d*(?:\.\d+)*\s*[:\-]?\s*",
+                r"^(?:chapter|part|section|chuong|chương|phan|phần)(?:\s+(?:\d+(?:\.\d+)*|(?:[ivxlcdmIVXLCDM]+|[a-zA-Z0-9])(?=\s|[:\-.]|$))|\s*[:\-]\s*)\s*",
                 "",
                 heading_text,
                 flags=re.IGNORECASE,
@@ -2455,7 +2481,7 @@ def _apply_structure_lock(markdown_text: str) -> str:
             continue
 
         chapter_like = re.match(
-            r"^\s*(?:chapter|part|section|chuong|chương|phan|phần)\s*[:\-]?\s*\d*(?:\.\d+)*\s*[:\-]?\s*(.+)$",
+            r"^\s*(?:chapter|part|section|chuong|chương|phan|phần)(?:\s+(?:\d+(?:\.\d+)*|(?:[ivxlcdmIVXLCDM]+|[a-zA-Z0-9])(?=\s|[:\-.]|$))|\s*[:\-]\s*)\s*(.+)$",
             line,
             flags=re.IGNORECASE,
         )

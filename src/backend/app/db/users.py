@@ -81,7 +81,9 @@ def list_users() -> list[dict[str, Any]]:
                    COALESCE(us.request_count, 0) AS request_count,
                    COALESCE(us.llm_calls, 0) AS llm_calls,
                    COALESCE(us.token_usage, 0) AS token_usage,
-                   us.last_activity
+                   us.last_activity,
+                   (SELECT COUNT(*) FROM projects p WHERE p.user_id = u.id) AS projects_count,
+                   (SELECT COUNT(*) FROM documents d WHERE d.user_id = u.id) AS documents_count
             FROM users u
             LEFT JOIN usage_stats us ON us.user_id = u.id
             ORDER BY u.created_at DESC

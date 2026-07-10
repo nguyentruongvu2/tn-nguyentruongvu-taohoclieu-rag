@@ -425,6 +425,8 @@ export interface AdminUser {
   llm_calls: number;
   token_usage: number;
   last_activity: string | null;
+  projects_count?: number;
+  documents_count?: number;
 }
 
 export interface AdminDocument {
@@ -436,6 +438,7 @@ export interface AdminDocument {
   chunks_count: number;
   status: string;
   created_at: string;
+  file_size?: number;
 }
 
 export interface AdminUsageEntry {
@@ -466,4 +469,14 @@ export interface BatchSectionResult {
   content: string;
   status: "generated" | "empty";
   sentinel?: string;
+}
+
+export interface AdminStats {
+  total_users: number;
+  total_projects: number;
+  total_documents: number;
+  total_quizzes: number;
+  total_llm_calls: number;
+  total_tokens: number;
+  estimated_cost_vnd: number;
 }

@@ -175,99 +175,17 @@ export default function ChatPanel({
 
       <div className="flex-1 min-h-0 overflow-y-auto pr-2 pb-4 space-y-6 custom-scrollbar rounded-2xl bg-white shadow-sm border border-gray-100 p-6 flex flex-col justify-between">
         {chatHistory.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center max-w-2xl mx-auto space-y-8 py-6">
+          <div className="h-full flex flex-col items-center justify-center w-full space-y-8 py-6">
             <div className="text-center space-y-3">
               <div className="inline-flex p-3.5 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl text-white shadow-lg shadow-blue-100 animate-pulse mb-2">
-                <Sparkles size={32} />
+                <BookOpen size={32} />
               </div>
               <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-950 tracking-tight bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600">
-                Trợ giảng RAG AI
+                Trợ giảng EduRAG
               </h2>
               <p className="text-sm text-gray-500 font-medium max-w-md mx-auto">
                 Hỏi đáp thông minh, phân tích tài liệu bài giảng và hỗ trợ soạn thảo nhanh chóng. Hãy chọn tài liệu và bắt đầu!
               </p>
-            </div>
-
-            {/* Quy trình hướng dẫn soạn bài giảng thông minh */}
-            <div className="w-full bg-gradient-to-br from-slate-50 to-blue-50/20 rounded-2xl p-5 border border-gray-150 shadow-sm space-y-4">
-              <div className="flex items-center gap-2">
-                <div className="p-2 bg-blue-500/10 text-blue-600 rounded-lg">
-                  <BookOpen size={18} className="text-blue-600" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-gray-900">
-                    📚 Quy trình soạn bài giảng thông minh hiệu quả
-                  </h3>
-                  <p className="text-[11px] text-gray-500">
-                    Phối hợp các tính năng của hệ thống RAG để tối ưu công việc giảng dạy
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                {/* Bước 1 */}
-                <div className="bg-white border border-gray-100 rounded-xl p-3.5 space-y-1.5 shadow-sm hover:border-blue-200 transition-all">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-blue-600 text-[10px] px-1.5 py-0.5 bg-blue-50 rounded-full">Bước 1</span>
-                    <span className="text-sm">📂</span>
-                  </div>
-                  <h4 className="font-bold text-gray-900 text-xs">Quản lý Tài liệu</h4>
-                  <p className="text-gray-500 text-[11px] leading-normal font-normal">
-                    Tải lên tài liệu tham khảo (PDF, DOCX, TXT...). Hệ thống sẽ trích xuất nội dung tự động.
-                  </p>
-                </div>
-
-                {/* Bước 2 */}
-                <div className="bg-white border border-gray-100 rounded-xl p-3.5 space-y-1.5 shadow-sm hover:border-blue-200 transition-all">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-blue-600 text-[10px] px-1.5 py-0.5 bg-blue-50 rounded-full">Bước 2</span>
-                    <span className="text-sm">💬</span>
-                  </div>
-                  <h4 className="font-bold text-gray-900 text-xs">AI Trợ giảng</h4>
-                  <p className="text-gray-500 text-[11px] leading-normal font-normal">
-                    Chọn tài liệu vừa tải ở thanh công cụ phía trên và hỏi AI để tóm tắt, giải thích khái niệm.
-                  </p>
-                </div>
-
-                {/* Bước 3 */}
-                <div className="bg-white border border-gray-100 rounded-xl p-3.5 space-y-1.5 shadow-sm hover:border-blue-200 transition-all">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-blue-600 text-[10px] px-1.5 py-0.5 bg-blue-50 rounded-full">Bước 3</span>
-                    <span className="text-sm">📝</span>
-                  </div>
-                  <h4 className="font-bold text-gray-900 text-xs">Tạo bài giảng (RAG)</h4>
-                  <p className="text-gray-500 text-[11px] leading-normal font-normal">
-                    Sử dụng các tài liệu đã tải để AI lập đề cương và sinh nội dung bài giảng hoàn chỉnh tự động.
-                  </p>
-                </div>
-
-                {/* Bước 4 */}
-                <div className="bg-white border border-gray-100 rounded-xl p-3.5 space-y-1.5 shadow-sm hover:border-blue-200 transition-all">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-blue-600 text-[10px] px-1.5 py-0.5 bg-blue-50 rounded-full">Bước 4</span>
-                    <span className="text-sm">🧠</span>
-                  </div>
-                  <h4 className="font-bold text-gray-900 text-xs">Tạo Quiz trắc nghiệm</h4>
-                  <p className="text-gray-500 text-[11px] leading-normal font-normal">
-                    Trong trình soạn thảo bài giảng, nhấp chọn <span className="font-semibold text-blue-600">Tạo Quiz</span> để kiểm tra kiến thức và xuất ngân hàng câu hỏi.
-                  </p>
-                </div>
-              </div>
-
-              <div className="bg-blue-50/50 rounded-xl p-3 border border-blue-100/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                <div className="space-y-0.5">
-                  <span className="font-bold text-blue-800 text-[10px] uppercase tracking-wider block">💡 Câu lệnh hướng dẫn hiệu quả:</span>
-                  <p className="text-gray-600 italic">
-                    "Hướng dẫn tôi các bước sử dụng hệ thống RAG để soạn bài giảng và tạo quiz hiệu quả."
-                  </p>
-                </div>
-                <button
-                  onClick={() => handleSendMessage("Hướng dẫn tôi các bước sử dụng hệ thống RAG để soạn bài giảng và tạo quiz hiệu quả.")}
-                  className="shrink-0 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-xl transition-all shadow-sm shadow-blue-200 text-xs cursor-pointer"
-                >
-                  Thử ngay ⚡
-                </button>
-              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">

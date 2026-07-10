@@ -128,3 +128,6 @@ test_debug*.py
 test_temp*.py
 **/__pycache__/
 .pytest_cache/
+
+# Ignore large video demo files
+docs/DEMO.mp4

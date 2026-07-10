@@ -1,13 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
   generateQuiz,
-  getQuizStats,
-  saveQuizAttempt,
   type QuizItem,
-  type QuizStats,
 } from "../services/api";
+import { toastService } from "../services/toastService";
 import { QuizCard } from "../components/QuizCard";
-import { ScorePanel } from "../components/ScorePanel";
 import "./QuizPage.css";
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -16,32 +13,16 @@ const QUIZ_STORAGE_KEY = "rag.quiz.pending";
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 
-interface UserAnswers {
-  [questionId: string]: string;
-}
-
-
 interface QuizState {
   items: QuizItem[];
   projectId: string;
   lessonContent: string;
   numQuestions: number;
   variationSeed?: number | null;
-  answers?: UserAnswers;
-  elapsed?: number;
-  submitted?: boolean;
-  score?: number;
 }
 
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-
-
-function formatTimer(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${String(m).padStart(2, "00")}:${String(s).padStart(2, "00")}`;
-}
 
 
 // ── Export helpers ────────────────────────────────────────────────────────────
@@ -515,9 +496,6 @@ function getQuestionsCountFromPrompt(prompt: string): number {
 
 export default function QuizPage() {
   const [items, setItems] = useState<QuizItem[]>([]);
-  const [answers, setAnswers] = useState<UserAnswers>({});
-  const [submitted, setSubmitted] = useState(false);
-  const [score, setScore] = useState(0);
   const [loading, setLoading] = useState(true);
   const [progressVal, setProgressVal] = useState(0);
   const [error, setError] = useState("");
@@ -525,18 +503,13 @@ export default function QuizPage() {
   const [lessonContent, setLessonContent] = useState("");
   const [numQuestions, setNumQuestions] = useState(5);
   const [variationSeed, setVariationSeed] = useState<number | null>(null);
-  const [stats, setStats] = useState<QuizStats | null>(null);
-  const [savedId, setSavedId] = useState<number | null>(null);
   const [activeCard, setActiveCard] = useState<number | null>(null);
-  const [elapsed, setElapsed] = useState(0);
-  const [filterErrors, setFilterErrors] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   // Modal settings
   const [showRegenModal, setShowRegenModal] = useState(false);
   const [regenCustom, setRegenCustom] = useState("");
   const [showQuizPromptGuide, setShowQuizPromptGuide] = useState(false);
   const initCalledRef = useRef(false);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // ── Init ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (initCalledRef.current) return;
@@ -555,19 +528,9 @@ export default function QuizPage() {
       if (state.items && state.items.length > 0) {
         setItems(state.items);
         setVariationSeed(state.variationSeed ?? null);
-        if (state.answers) setAnswers(state.answers);
-        if (state.elapsed) setElapsed(state.elapsed);
-        if (state.submitted) {
-          setSubmitted(true);
-          setScore(state.score || 0);
-        }
         setLoading(false);
-        getQuizStats(state.projectId || undefined)
-          .then(setStats)
-          .catch(() => {});
         return;
       }
-
 
       // Otherwise, instead of auto-generating, just enter setup mode
       setLoading(false);
@@ -577,14 +540,6 @@ export default function QuizPage() {
       setLoading(false);
     }
   }, []);
-  // ── Timer ─────────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (loading || submitted || items.length === 0) return;
-    timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [loading, submitted, items.length]);
   // Sanitize and clamp numQuestions when opening configuration modal to prevent 422 errors
   useEffect(() => {
     if (showRegenModal) {
@@ -596,91 +551,17 @@ export default function QuizPage() {
   // ── Handlers ──────────────────────────────────────────────────────────────
 
 
-  const handleSelect = (questionId: string, letter: string) => {
-    if (submitted) return;
-    setAnswers((prev) => {
-      const newAnswers = { ...prev, [questionId]: letter };
-      // Persist to localStorage
-      const raw = localStorage.getItem(QUIZ_STORAGE_KEY);
-      if (raw) {
-        const state = JSON.parse(raw);
-        localStorage.setItem(
-          QUIZ_STORAGE_KEY,
-          JSON.stringify({ ...state, answers: newAnswers, elapsed }),
-        );
-      }
-      return newAnswers;
-    });
-  };
-  const handleSubmit = () => {
-    if (items.length === 0) return;
-    // Check if all answered
-    if (!allAnswered) {
-      const confirmed = window.confirm(
-        `Bạn chưa hoàn thành tất cả câu hỏi (còn ${unanswered} câu). Bạn có chắc chắn muốn nộp bài không?`
-      );
-      if (!confirmed) {
-        // Focus first unanswered
-        const firstUnansweredIdx = items.findIndex(item => !answers[item.id]);
-        if (firstUnansweredIdx !== -1) {
-          const el = document.getElementById(`quiz-card-${firstUnansweredIdx}`);
-          if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-        }
-        return;
-      }
-    }
-
-
-    if (timerRef.current) clearInterval(timerRef.current);
-    let correct = 0;
-    items.forEach((item) => {
-      if (answers[item.id] === item.correct_answer) correct++;
-    });
-    setScore(correct);
-    setSubmitted(true);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-    // Save submitted state
-    const raw = localStorage.getItem(QUIZ_STORAGE_KEY);
-    if (raw) {
-      const state = JSON.parse(raw);
-      state.submitted = true;
-      state.score = correct;
-      state.elapsed = elapsed;
-      localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(state));
-    }
-
-
-    saveQuizAttempt({
-      score: correct,
-      total: items.length,
-      num_questions: items.length,
-      answers,
-      project_id: projectId || undefined,
-      variation_seed: variationSeed ?? undefined,
-    })
-      .then((res) => {
-        setSavedId(res.id);
-        getQuizStats(projectId || undefined)
-          .then(setStats)
-          .catch(() => {});
-      })
-      .catch(() => {});
-  };
   const handleBack = () => {
-    if (projectId) window.location.href = `/materials/${projectId}/editor`;
-    else {
+    if (window.history.length > 1) {
+      window.history.back();
+    } else {
       window.close();
-      window.location.href = "/";
+      if (projectId) {
+        window.location.href = `/materials/${projectId}/editor`;
+      } else {
+        window.location.href = "/";
+      }
     }
-  };
-  const handleRetry = () => {
-    setAnswers({});
-    setSubmitted(false);
-    setScore(0);
-    setSavedId(null);
-    setElapsed(0);
-    setFilterErrors(false);
-    window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const handleUpdateItem = (updatedItem: QuizItem) => {
     const newItems = items.map((q) => (q.id === updatedItem.id ? updatedItem : q));
@@ -701,10 +582,6 @@ export default function QuizPage() {
   const handleDeleteItem = (questionId: string) => {
     const newItems = items.filter((q) => q.id !== questionId);
     setItems(newItems);
-    // Remove the answer to this question if any
-    const newAnswers = { ...answers };
-    delete newAnswers[questionId];
-    setAnswers(newAnswers);
     // Save to localStorage
     const raw = localStorage.getItem(QUIZ_STORAGE_KEY);
     if (raw) {
@@ -714,13 +591,35 @@ export default function QuizPage() {
         JSON.stringify({
           ...state,
           items: newItems,
-          answers: newAnswers,
         }),
       );
     }
   };
   const handleRegenerate = (n: number, bloom: string, custom: string, mode: "replace" | "append" = "replace") => {
-    if (!lessonContent) return;
+    const cleanContent = (lessonContent || "").trim();
+    if (!cleanContent) {
+      toastService.warning("Nội dung bài giảng của mục này đang trống. Vui lòng quay lại Soạn thảo bài giảng để tạo nội dung trước!");
+      return;
+    }
+
+    const placeholderTexts = [
+      "chay ai tao hoac nhap noi dung markdown thu cong",
+      "chạy ai tạo hoặc nhập nội dung markdown thủ công",
+      "ban xem truoc trong",
+      "bản xem trước trống"
+    ];
+    const normContent = cleanContent.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[đĐ]/g, "d");
+    const isPlaceholder = placeholderTexts.some(p => normContent.includes(p));
+
+    const lines = cleanContent.split("\n").map(l => l.trim()).filter(Boolean);
+    const bodyLines = lines.filter(l => !l.startsWith("#"));
+    const bodyText = bodyLines.join("\n").trim();
+
+    if (isPlaceholder || !bodyText || bodyText.length < 15) {
+      toastService.warning("Mục này chưa được soạn thảo nội dung lý thuyết chi tiết. Vui lòng tạo nội dung bài giảng trước khi tạo quiz!");
+      return;
+    }
+
     const newSeed = Math.floor(Math.random() * 10000);
     const nextIdStart = getNextIdNumber(items);
     setLoading(true);
@@ -741,29 +640,15 @@ export default function QuizPage() {
         setTimeout(() => {
           const generatedQuestions = res.questions ?? [];
           let newItems: QuizItem[];
-          let newAnswers: UserAnswers;
           if (mode === "append") {
             const mappedQuestions = generatedQuestions.map((q, idx) => ({
               ...q,
               id: `q${nextIdStart + idx}`
             }));
             newItems = [...items, ...mappedQuestions];
-            newAnswers = { ...answers };
-            setSubmitted(false);
-            setScore(0);
-            setSavedId(null);
-            setFilterErrors(false);
           } else {
             newItems = generatedQuestions;
-            newAnswers = {};
-            setAnswers({});
-            setSubmitted(false);
-            setScore(0);
-            setSavedId(null);
-            setElapsed(0);
-            setFilterErrors(false);
           }
-          
 
           setItems(newItems);
           setNumQuestions(n);
@@ -780,33 +665,27 @@ export default function QuizPage() {
                 numQuestions: n,
                 items: newItems,
                 variationSeed: res.variation_seed ?? newSeed,
-                answers: newAnswers,
-                submitted: false,
-                score: 0,
-                elapsed: mode === "append" ? elapsed : 0,
               }),
             );
           }
         }, 300);
       })
-      .catch((err) => {
+      .catch((err: any) => {
         clearInterval(interval);
-        setError(err instanceof Error ? err.message : "Lỗi tạo quiz.");
+        let msg = "Lỗi tạo quiz.";
+        if (err.response?.data?.detail) {
+          const detail = err.response.data.detail;
+          if (typeof detail === "string") msg = detail;
+          else if (typeof detail === "object" && detail.message) msg = detail.message;
+        } else if (err.message) {
+          msg = err.message;
+        }
+        setError(msg);
         setLoading(false);
       });
   };
   // ── Derived state ─────────────────────────────────────────────────────────
-
-
-  const total = items.length;
-  const answered = Object.keys(answers).length;
-  const unanswered = total - answered;
-  const progress = total > 0 ? (answered / total) * 100 : 0;
-  const allAnswered = answered === total && total > 0;
-  // Filtered items for "show errors only" mode
-  const visibleItems = submitted && filterErrors
-    ? items.filter((item) => answers[item.id] !== item.correct_answer)
-    : items;
+  const visibleItems = items;
   // ── Loading / Error ────────────────────────────────────────────────────────
 
 
@@ -860,7 +739,7 @@ export default function QuizPage() {
           ← Quay lại
         </button>
         <div className="qp-header-center">
-          <h1 className="qp-header-title">📝 Luyện tập Quiz</h1>
+          <h1 className="qp-header-title">📝 Xem trước ngân hàng câu hỏi</h1>
           {variationSeed !== null && (
             <span className="qp-seed-badge">seed #{variationSeed}</span>
           )}
@@ -890,18 +769,18 @@ export default function QuizPage() {
                     position: "absolute",
                     top: "calc(100% + 8px)",
                     right: 0,
-                    background: "#1e293b",
-                    border: "1px solid #334155",
+                    background: "#ffffff",
+                    border: "1px solid #e2e8f0",
                     borderRadius: "16px",
                     padding: "12px",
                     zIndex: 50,
                     width: "350px",
-                    boxShadow: "0 12px 40px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(255, 255, 255, 0.05)",
+                    boxShadow: "0 10px 30px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.02)",
                     fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
                   }}
                   onMouseLeave={() => setShowExportMenu(false)}
                 >
-                  <p style={{ margin: "0 4px 12px 4px", fontSize: "11px", color: "#94a3b8", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                  <p style={{ margin: "0 4px 12px 4px", fontSize: "11px", color: "#64748b", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
                     📤 Xuất ngân hàng câu hỏi
                   </p>
                   <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -912,20 +791,20 @@ export default function QuizPage() {
                         alignItems: "center",
                         gap: "12px",
                         padding: "12px",
-                        background: "rgba(59, 130, 246, 0.08)",
+                        background: "rgba(59, 130, 246, 0.04)",
                         borderRadius: "12px",
                         cursor: "pointer",
-                        border: "1px solid rgba(59, 130, 246, 0.2)",
+                        border: "1px solid rgba(59, 130, 246, 0.15)",
                         transition: "all 0.2s ease-in-out",
                       }}
                       onMouseEnter={(e) => {
-                        e.currentTarget.style.background = "rgba(59, 130, 246, 0.15)";
-                        e.currentTarget.style.borderColor = "rgba(59, 130, 246, 0.35)";
+                        e.currentTarget.style.background = "rgba(59, 130, 246, 0.08)";
+                        e.currentTarget.style.borderColor = "rgba(59, 130, 246, 0.25)";
                         e.currentTarget.style.transform = "translateY(-1px)";
                       }}
                       onMouseLeave={(e) => {
-                        e.currentTarget.style.background = "rgba(59, 130, 246, 0.08)";
-                        e.currentTarget.style.borderColor = "rgba(59, 130, 246, 0.2)";
+                        e.currentTarget.style.background = "rgba(59, 130, 246, 0.04)";
+                        e.currentTarget.style.borderColor = "rgba(59, 130, 246, 0.15)";
                         e.currentTarget.style.transform = "none";
                       }}
                       onClick={() => {
@@ -938,10 +817,10 @@ export default function QuizPage() {
                       </div>
                       <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                          <span style={{ fontSize: "13px", fontWeight: 700, color: "#f8fafc" }}>CSV (.csv)</span>
+                          <span style={{ fontSize: "13px", fontWeight: 700, color: "#1e293b" }}>CSV (.csv)</span>
                           <span style={{ fontSize: "9px", fontWeight: 700, padding: "2px 6px", background: "#3b82f6", color: "#ffffff", borderRadius: "12px", textTransform: "uppercase", letterSpacing: "0.02em" }}>Định dạng chính</span>
                         </div>
-                        <p style={{ margin: "2px 0 0 0", fontSize: "11px", color: "#94a3b8", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Ngân hàng câu hỏi đầy đủ</p>
+                        <p style={{ margin: "2px 0 0 0", fontSize: "11px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Ngân hàng câu hỏi đầy đủ</p>
                       </div>
                     </div>
                     {/* Item 2: Moodle GIFT */}
@@ -951,20 +830,20 @@ export default function QuizPage() {
                         alignItems: "center",
                         gap: "12px",
                         padding: "12px",
-                        background: "rgba(30, 41, 59, 0.4)",
+                        background: "#f8fafc",
                         borderRadius: "12px",
                         cursor: "pointer",
-                        border: "1px solid #334155",
+                        border: "1px solid #e2e8f0",
                         transition: "all 0.2s ease-in-out",
                       }}
                       onMouseEnter={(e) => {
-                        e.currentTarget.style.background = "#334155";
-                        e.currentTarget.style.borderColor = "#475569";
+                        e.currentTarget.style.background = "#f1f5f9";
+                        e.currentTarget.style.borderColor = "#cbd5e1";
                         e.currentTarget.style.transform = "translateY(-1px)";
                       }}
                       onMouseLeave={(e) => {
-                        e.currentTarget.style.background = "rgba(30, 41, 59, 0.4)";
-                        e.currentTarget.style.borderColor = "#334155";
+                        e.currentTarget.style.background = "#f8fafc";
+                        e.currentTarget.style.borderColor = "#e2e8f0";
                         e.currentTarget.style.transform = "none";
                       }}
                       onClick={() => {
@@ -976,7 +855,7 @@ export default function QuizPage() {
                         📘
                       </div>
                       <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-                        <span style={{ fontSize: "13px", fontWeight: 700, color: "#e2e8f0" }}>GIFT (.txt)</span>
+                        <span style={{ fontSize: "13px", fontWeight: 700, color: "#334155" }}>GIFT (.txt)</span>
                         <p style={{ margin: "2px 0 0 0", fontSize: "11px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Import trực tiếp vào Moodle (LMS)</p>
                       </div>
                     </div>
@@ -987,20 +866,20 @@ export default function QuizPage() {
                         alignItems: "center",
                         gap: "12px",
                         padding: "12px",
-                        background: "rgba(30, 41, 59, 0.4)",
+                        background: "#f8fafc",
                         borderRadius: "12px",
                         cursor: "pointer",
-                        border: "1px solid #334155",
+                        border: "1px solid #e2e8f0",
                         transition: "all 0.2s ease-in-out",
                       }}
                       onMouseEnter={(e) => {
-                        e.currentTarget.style.background = "#334155";
-                        e.currentTarget.style.borderColor = "#475569";
+                        e.currentTarget.style.background = "#f1f5f9";
+                        e.currentTarget.style.borderColor = "#cbd5e1";
                         e.currentTarget.style.transform = "translateY(-1px)";
                       }}
                       onMouseLeave={(e) => {
-                        e.currentTarget.style.background = "rgba(30, 41, 59, 0.4)";
-                        e.currentTarget.style.borderColor = "#334155";
+                        e.currentTarget.style.background = "#f8fafc";
+                        e.currentTarget.style.borderColor = "#e2e8f0";
                         e.currentTarget.style.transform = "none";
                       }}
                       onClick={() => {
@@ -1012,7 +891,7 @@ export default function QuizPage() {
                         🔮
                       </div>
                       <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-                        <span style={{ fontSize: "13px", fontWeight: 700, color: "#e2e8f0" }}>Moodle XML (.xml)</span>
+                        <span style={{ fontSize: "13px", fontWeight: 700, color: "#334155" }}>Moodle XML (.xml)</span>
                         <p style={{ margin: "2px 0 0 0", fontSize: "11px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Định dạng import chuẩn của Moodle</p>
                       </div>
                     </div>
@@ -1023,20 +902,20 @@ export default function QuizPage() {
                         alignItems: "center",
                         gap: "12px",
                         padding: "12px",
-                        background: "rgba(30, 41, 59, 0.4)",
+                        background: "#f8fafc",
                         borderRadius: "12px",
                         cursor: "pointer",
-                        border: "1px solid #334155",
+                        border: "1px solid #e2e8f0",
                         transition: "all 0.2s ease-in-out",
                       }}
                       onMouseEnter={(e) => {
-                        e.currentTarget.style.background = "#334155";
-                        e.currentTarget.style.borderColor = "#475569";
+                        e.currentTarget.style.background = "#f1f5f9";
+                        e.currentTarget.style.borderColor = "#cbd5e1";
                         e.currentTarget.style.transform = "translateY(-1px)";
                       }}
                       onMouseLeave={(e) => {
-                        e.currentTarget.style.background = "rgba(30, 41, 59, 0.4)";
-                        e.currentTarget.style.borderColor = "#334155";
+                        e.currentTarget.style.background = "#f8fafc";
+                        e.currentTarget.style.borderColor = "#e2e8f0";
                         e.currentTarget.style.transform = "none";
                       }}
                       onClick={() => {
@@ -1048,7 +927,7 @@ export default function QuizPage() {
                         📝
                       </div>
                       <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-                        <span style={{ fontSize: "13px", fontWeight: 700, color: "#e2e8f0" }}>Markdown (.md)</span>
+                        <span style={{ fontSize: "13px", fontWeight: 700, color: "#334155" }}>Markdown (.md)</span>
                         <p style={{ margin: "2px 0 0 0", fontSize: "11px", color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Chỉnh sửa, xem trước và lưu trữ</p>
                       </div>
                     </div>
@@ -1059,101 +938,25 @@ export default function QuizPage() {
           )}
         </div>
       </header>
-      {/* Progress bar (only before submit) */}
-      {!submitted && (
-        <div className="qp-progress-wrap">
-          <div className="qp-progress-bar-track">
-            <div
-              className="qp-progress-bar-fill"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-          <span className="qp-progress-label">
-            {answered}/{total} câu đã trả lời
-          </span>
-          <span className="qp-timer">⏱ Thời gian: {formatTimer(elapsed)}</span>
-        </div>
-      )}
-
-
       {/* Main content */}
       <div className="qp-content">
-        {/* Score panel (after submit) */}
-        {submitted && (
-          <ScorePanel
-            score={score}
-            total={total}
-            elapsed={elapsed}
-            savedId={savedId}
-            stats={stats}
-            items={items}
-            userAnswers={answers}
-            onRetry={handleRetry}
-            onBack={handleBack}
-          />
-        )}
-
-
-        {/* Filter toggle (after submit) */}
-        {submitted && items.some((item) => answers[item.id] !== item.correct_answer) && (
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
-            <button
-              className={`qp-filter-toggle${filterErrors ? " active" : ""}`}
-              onClick={() => setFilterErrors((p) => !p)}
-            >
-              {filterErrors ? "🔍 Đang lọc lỗi" : "❌ Chỉ hiện câu sai"}
-            </button>
-          </div>
-        )}
-
-
         {/* Question cards */}
         {visibleItems.map((item, idx) => (
           <div key={item.id} id={`quiz-card-${items.indexOf(item)}`}>
             <QuizCard
               item={item}
               index={items.indexOf(item)}
-              userAnswer={answers[item.id]}
-              submitted={submitted}
+              userAnswer={undefined}
+              submitted={false}
               expanded={activeCard === idx}
-              onSelect={handleSelect}
+              onSelect={() => {}}
               onToggleExpand={(i) => setActiveCard(activeCard === i ? null : i)}
               onUpdateItem={handleUpdateItem}
               onDeleteItem={handleDeleteItem}
             />
           </div>
         ))}
-
-
-        {submitted && filterErrors && visibleItems.length === 0 && (
-          <div style={{
-            textAlign: "center",
-            padding: "40px 20px",
-            color: "#4ade80",
-            fontSize: 16,
-            fontWeight: 600,
-          }}>
-            🎉 Tuyệt vời! Bạn không có câu nào sai.
-          </div>
-        )}
       </div>
-      {/* Submit bar */}
-      {!submitted && (
-        <div className="qp-submit-bar">
-          <span className={`qp-submit-status${allAnswered ? " all-done" : ""}`}>
-            {allAnswered
-              ? `✓ Đã trả lời tất cả ${total} câu`
-              : `⚠ Còn ${unanswered} câu chưa trả lời`}
-          </span>
-          <button
-            className={`qp-submit-btn${allAnswered ? " all-answered" : ""}`}
-            onClick={handleSubmit}
-            disabled={answered === 0}
-          >
-            Nộp bài →
-          </button>
-        </div>
-      )}
       {/* Regen Modal */}
       {showRegenModal && (
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -1198,6 +1001,10 @@ export default function QuizPage() {
                   </ul>
                   <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "6px", fontSize: "11px", color: "#64748b" }}>
                     <strong>Ví dụ đầy đủ:</strong> <em>"Tạo 5 câu hỏi nâng cao mức độ Nhận biết và Thông hiểu về các khái niệm cốt lõi trong Mục 1.1 Công nghệ phần mềm."</em>
+                  </div>
+                  <div style={{ marginTop: "8px", borderTop: "1px dashed #fca5a5", paddingTop: "6px", fontSize: "11px", color: "#b91c1c", display: "flex", gap: "4px", alignItems: "flex-start" }}>
+                    <span>⚠️</span>
+                    <span><strong>Lưu ý quan trọng:</strong> Hệ thống không thể sinh câu hỏi đối với các mục bài giảng chưa được soạn thảo nội dung lý thuyết chi tiết.</span>
                   </div>
                 </div>
               )}

@@ -268,10 +268,25 @@ export default function UserDashboard() {
     try {
       const rows = await listChatConversations();
       setConversations(rows);
-      if (!activeConversationId && rows.length > 0) {
-        setActiveConversationId(rows[0].id);
-      }
-      if (!rows.length) {
+      if (rows.length > 0) {
+        const savedId = localStorage.getItem(`${storagePrefix}_conversationId`);
+        if (savedId === null) {
+          // No saved ID, fallback to first conversation
+          setActiveConversationId(String(rows[0].id));
+        } else {
+          const exists = rows.some((r) => String(r.id) === savedId);
+          if (exists) {
+            setActiveConversationId(savedId);
+          } else if (savedId !== "") {
+            // ID was saved but not found, fallback to first
+            setActiveConversationId(String(rows[0].id));
+          } else {
+            // savedId is explicitly "", meaning they wanted a new conversation draft. Keep it ""
+            setActiveConversationId("");
+          }
+        }
+      } else {
+        setActiveConversationId("");
         setChatHistory([]);
       }
     } catch (e: any) {
@@ -279,20 +294,11 @@ export default function UserDashboard() {
     }
   };
 
-  const handleCreateConversation = async () => {
-    try {
-      const created = await createChatConversation({
-        title: "Cuộc hội thoại mới",
-        document_ids: selectedDocIds.length > 0 ? selectedDocIds : undefined,
-      });
-      await loadConversations();
-      setActiveConversationId(created.id);
-      setChatHistory([]);
-    } catch (e: any) {
-      const msg = e?.message || "Không thể tạo cuộc hội thoại mới.";
-      console.error(msg);
-      toastService.error(msg);
-    }
+  const handleCreateConversation = () => {
+    setActiveConversationId("");
+    setSelectedDocIds([]);
+    setChatHistory([]);
+    setMessage("");
   };
 
   const handleDeleteConversation = async () => {
@@ -303,7 +309,7 @@ export default function UserDashboard() {
       await deleteChatConversation(activeConversationId);
       const rows = await listChatConversations();
       setConversations(rows);
-      const nextId = rows.length > 0 ? rows[0].id : "";
+      const nextId = rows.length > 0 ? String(rows[0].id) : "";
       setActiveConversationId(nextId);
       if (!nextId) {
         setChatHistory([]);
@@ -317,17 +323,18 @@ export default function UserDashboard() {
 
   useEffect(() => {
     const loadActiveMessages = async () => {
+      if (streaming) return; // Prevent overwriting chatHistory during stream
       if (!activeConversationId) {
         setChatHistory([]);
         return;
       }
       
-      const conv = conversations.find(c => c.id === activeConversationId);
+      const conv = conversations.find((c) => String(c.id) === String(activeConversationId));
       if (conv) {
         if (conv.document_ids && conv.document_ids.length > 0) {
-          setSelectedDocIds(conv.document_ids);
+          setSelectedDocIds(conv.document_ids.map((id: any) => String(id)));
         } else if (conv.document_id) {
-          setSelectedDocIds([conv.document_id]);
+          setSelectedDocIds([String(conv.document_id)]);
         }
       }
 
@@ -340,11 +347,29 @@ export default function UserDashboard() {
     };
 
     loadActiveMessages();
-  }, [activeConversationId, conversations]);
+  }, [activeConversationId, conversations, streaming]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files?.length) return;
     const file = e.target.files[0];
+
+    // 1. Kiểm tra định dạng tệp tin
+    const allowedExtensions = ["pdf", "docx", "txt", "md"];
+    const fileExtension = file.name.split(".").pop()?.toLowerCase() || "";
+    if (!allowedExtensions.includes(fileExtension)) {
+      toastService.error(`Định dạng tệp .${fileExtension} không được hỗ trợ. Vui lòng chọn tệp PDF, DOCX, TXT, hoặc MD.`);
+      e.target.value = "";
+      return;
+    }
+
+    // 2. Kiểm tra dung lượng tệp tin (Tối đa 100MB)
+    const maxSizeBytes = 100 * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
+      toastService.error(`Dung lượng tệp vượt quá hạn mức cho phép (Tối đa 100MB). Dung lượng tệp hiện tại: ${(file.size / (1024 * 1024)).toFixed(2)}MB.`);
+      e.target.value = "";
+      return;
+    }
+
     setUploading(true);
     setUploadProgress(0);
     setUploadStage("uploading");
@@ -516,6 +541,12 @@ export default function UserDashboard() {
   const handleSendMessage = async (text?: string) => {
     const currentMsg = typeof text === "string" ? text : message;
     if (!currentMsg.trim() || streaming) return;
+
+    if (selectedDocIds.length === 0) {
+      toastService.warning("Vui lòng chọn ít nhất 1 tài liệu nguồn trước khi bắt đầu trò chuyện!");
+      return;
+    }
+
     setMessage("");
     setStreaming(true);
 
@@ -526,8 +557,8 @@ export default function UserDashboard() {
           title: currentMsg.slice(0, 80),
           document_ids: selectedDocIds.length > 0 ? selectedDocIds : undefined,
         });
-        currentConversationId = created.id;
-        setActiveConversationId(created.id);
+        currentConversationId = String(created.id);
+        setActiveConversationId(String(created.id));
       } catch (e: any) {
         setStreaming(false);
         const errMsg = e?.message || "Không thể tạo cuộc hội thoại.";
@@ -554,6 +585,7 @@ export default function UserDashboard() {
         (chunk) => {
           fullAnswer += chunk;
           setChatHistory((prev) => {
+            if (prev.length === 0) return prev;
             const up = [...prev];
             up[up.length - 1].answer = fullAnswer;
             return up;
@@ -561,9 +593,10 @@ export default function UserDashboard() {
         },
         (metadata) => {
           if (metadata.conversation_id) {
-            setActiveConversationId(metadata.conversation_id);
+            setActiveConversationId(String(metadata.conversation_id));
           }
           setChatHistory((prev) => {
+            if (prev.length === 0) return prev;
             const up = [...prev];
             up[up.length - 1].metadata = { sources: metadata.sources };
             return up;
@@ -573,6 +606,7 @@ export default function UserDashboard() {
           // onRetry callback
           fullAnswer = "";
           setChatHistory((prev) => {
+            if (prev.length === 0) return prev;
             const up = [...prev];
             up[up.length - 1].answer = "";
             return up;
@@ -581,6 +615,7 @@ export default function UserDashboard() {
       );
       if (!fullAnswer) {
         setChatHistory((prev) => {
+          if (prev.length === 0) return prev;
           const up = [...prev];
           up[up.length - 1].answer = "Không có nội dung trả lời";
           return up;

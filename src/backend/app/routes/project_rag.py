@@ -233,6 +233,29 @@ async def generate_project_outline_endpoint(
 ) -> dict[str, Any]:
     enforce_rate_limit(current_user["id"])
 
+    # Sanitize and handle empty or nonsense prompt
+    import re
+    clean_prompt = (request.prompt or "").strip()
+    is_empty_or_nonsense = False
+    if not clean_prompt:
+        is_empty_or_nonsense = True
+    else:
+        lower_prompt = clean_prompt.lower()
+        if len(lower_prompt) < 4:
+            is_empty_or_nonsense = True
+        elif re.match(r'^[a-z0-9\s\.\,\?\!\-\_\(\)\[\]]+$', lower_prompt):
+            words = lower_prompt.split()
+            if len(words) == 1:
+                word = words[0]
+                common_terms = {"scrum", "agile", "cnpm", "cntt", "oop", "code", "python", "uml", "git", "java", "syllabus", "outline", "mục", "lục"}
+                if len(word) < 5 and word not in common_terms:
+                    is_empty_or_nonsense = True
+            elif all(len(w) < 3 for w in words) and len(words) < 3:
+                is_empty_or_nonsense = True
+
+    if is_empty_or_nonsense:
+        request.prompt = "Hãy tạo đề cương mục lục chi tiết, logic và toàn diện cho bài giảng dựa trên toàn bộ nội dung tài liệu nguồn đã cung cấp."
+
     project = get_project_for_user(project_id, current_user["id"], current_user["role"])
     if not project:
         raise HTTPException(status_code=404, detail="Project not found or access denied")
@@ -682,8 +705,14 @@ async def generate_section_endpoint(
                 rag_pipeline._generate_content_with_failover,
                 structure_prompt
             )
-            cleaned_subsections = re.sub(r"^```(?:json)?\s*", "", raw_subsections.strip(), flags=re.IGNORECASE)
-            cleaned_subsections = re.sub(r"\s*```$", "", cleaned_subsections).strip()
+            text_raw = raw_subsections.strip()
+            start_idx = text_raw.find('[')
+            end_idx = text_raw.rfind(']')
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                cleaned_subsections = text_raw[start_idx:end_idx+1]
+            else:
+                cleaned_subsections = re.sub(r"^```(?:json)?\s*", "", text_raw, flags=re.IGNORECASE)
+                cleaned_subsections = re.sub(r"\s*```$", "", cleaned_subsections).strip()
             new_sections = json.loads(cleaned_subsections)
             if not isinstance(new_sections, list):
                 new_sections = []
@@ -1437,8 +1466,14 @@ def _parse_suggested_prompts_json(raw: str) -> dict[str, Any] | None:
     if not text:
         return None
 
-    cleaned = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+    # Strip potential outer markdown code block wrapper or text
+    start_idx = text.find('{')
+    end_idx = text.rfind('}')
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        cleaned = text[start_idx:end_idx+1]
+    else:
+        cleaned = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
 
     # Try strict parse first
     try:
@@ -1584,8 +1619,8 @@ async def suggest_section_prompt_endpoint(
         "## Quy tắc xây dựng prompt & Tận dụng thế mạnh tài liệu\n"
         "- Prompt phải bám sát chương mục hiện tại.\n"
         "- Nếu đề mục liên quan đến Thực hành hoặc Bài tập (ví dụ chứa từ khóa 'thực hành', 'bài tập', 'lab', 'thảo luận thực hành'), prompt gợi ý cho mục 'Bài tập Củng cố' (exercise) và 'Ví dụ Minh họa' (example) BẮT BUỘC phải yêu cầu cấu trúc đầu ra gồm: 1. Câu hỏi, 2. Cách làm, 3. Kết quả mong đợi, 4. Mã nguồn Python đặt trong khối code block markdown.\n"
-        "- Nếu nhắc tới việc chèn ảnh hoặc sơ đồ minh họa, prompt gợi ý BẮT BUỘC phải yêu cầu AI chèn thẻ ảnh theo đúng cú pháp Markdown: `![Tên ảnh/sơ đồ](<placeholder: Mô tả chi tiết hình vẽ bằng tiếng Việt | Detailed English prompt for AI image generator>)`. KHÔNG ĐƯỢC sử dụng các cú pháp tự chế như `[IMAGE_PLACEHOLDER:...]` hay bất cứ định dạng nào khác. Yêu cầu AI viết phần tiếng Anh vẽ ảnh bắt đầu bằng từ khóa phong cách: 'Minimalist 2D vector art, clean design, scientific style, white background, no text clutter, ...'.\n"
-        "- Chủ động đề xuất chèn ảnh/sơ đồ: Đối với các đề mục chứa nội dung cần trực quan hóa (như quy trình làm việc, kiến trúc hệ thống, sơ đồ khối phân loại, đồ thị phân phối thống kê hoặc biểu đồ phân tích tương quan), prompt gợi ý phải yêu cầu AI chèn thẻ ảnh placeholder đúng cú pháp tại vị trí phù hợp. Lưu ý: Nghiêm cấm chèn dấu gạch chéo ngược escape `\\` hoặc `\\_` trong phần mô tả ảnh để tránh làm hỏng cú pháp phân tích liên kết của hệ thống.\n"
+        "- Nếu nhắc tới việc chèn ảnh hoặc sơ đồ minh họa, prompt gợi ý BẮT BUỘC phải yêu cầu AI chèn thẻ ảnh theo đúng cú pháp Markdown: `![Tên ảnh/sơ đồ](<placeholder: Mô tả chi tiết hình vẽ bằng tiếng Việt | Detailed English prompt for AI image generator>)`. KHÔNG ĐƯỢC sử dụng các cú pháp tự chế như `[IMAGE_PLACEHOLDER:...]` hay bất cứ định dạng nào khác. Bắt buộc phải có chữ 'placeholder:' ở đầu và dấu '|' ở giữa, tuyệt đối không được viết tắt thành `<[Minimalist...]>` hoặc bỏ đi từ khóa 'placeholder:'. Yêu cầu AI viết phần tiếng Anh vẽ ảnh bắt đầu bằng từ khóa phong cách: 'Minimalist 2D vector art, clean design, scientific style, white background, no text clutter, ...'. Lưu ý đặc biệt: Yêu cầu AI tuyệt đối KHÔNG viết dấu ngoặc đơn `(` hoặc `)` bên trong phần mô tả ảnh placeholder (thay vào đó dùng ngoặc vuông `[` và `]`), và KHÔNG dùng dấu `<` hoặc `>` bên trong phần mô tả để tránh làm hỏng cú pháp phân tích liên kết của hệ thống.\n"
+        "- Chủ động đề xuất chèn ảnh/sơ đồ: Đối với các đề mục chứa nội dung cần trực quan hóa (như quy trình làm việc, kiến trúc hệ thống, sơ đồ khối phân loại, đồ thị phân phối thống kê hoặc biểu đồ phân tích tương quan), prompt gợi ý phải yêu cầu AI chèn thẻ ảnh placeholder đúng cú pháp tại vị trí phù hợp. Lưu ý: Nghiêm cấm chèn dấu gạch chéo ngược escape `\\` hoặc `\\_` trong phần mô tả ảnh.\n"
         "- Sử dụng thế mạnh tài liệu:\n"
         "  + Với tài liệu 'Wes McKinney - Python for Data Analysis': ưu tiên các prompt hướng dẫn sử dụng thư viện pandas, numpy để chuẩn bị, xử lý và phân tích dữ liệu chuỗi thời gian.\n"
         "  + Với tài liệu 'José Unpingco - Python for Probability...': ưu tiên các prompt tích hợp công thức toán học thống kê và kiểm định, hồi quy bằng thư viện scipy.stats hoặc statsmodels.\n"

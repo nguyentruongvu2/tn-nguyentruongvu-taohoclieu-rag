@@ -38,11 +38,11 @@ export default function DocumentManager({
               </div>
               <div className="text-left space-y-1">
                 <h3 className="text-lg font-bold text-gray-800">
-                  Tải tài liệu mới lên RAG
+                  Tải tài liệu lên hệ thống
                 </h3>
                 <p className="text-xs text-gray-500 max-w-xl font-medium leading-relaxed">
-                  Hỗ trợ định dạng PDF, DOCX, TXT, MD (bao gồm ảnh Scan OCR). 
-                  Hệ thống tự động phân mảnh (chunking) và nhúng (embedding) để AI có thể đọc hiểu.
+                  Hỗ trợ tải lên các tài liệu định dạng PDF, DOCX (Dung lượng tối đa 100MB). 
+                  Hệ thống sẽ tự động trích xuất văn bản, phân mảnh dữ liệu và nhúng vector vào cơ sở dữ liệu để làm ngữ cảnh tri thức cho AI.
                 </p>
               </div>
             </div>
@@ -53,7 +53,7 @@ export default function DocumentManager({
                 ref={fileInputRef as RefObject<HTMLInputElement>}
                 onChange={handleFileUpload}
                 className="hidden"
-                accept=".pdf,.doc,.docx,.txt,.md"
+                accept=".pdf,.doc,.docx"
               />
               <button
                 onClick={() => !uploading && fileInputRef.current?.click()}

@@ -8,7 +8,6 @@ import {
   FileText,
   CheckCircle2,
   Loader2,
-  Play,
   PanelRight,
   Eye,
   EyeOff,
@@ -19,6 +18,10 @@ import {
   HelpCircle,
   Sparkles,
   FileCode,
+  Download,
+  Sun,
+  Moon,
+  Edit3,
 } from "lucide-react";
 import { EnhancedMarkdownRenderer } from "../components/EnhancedMarkdownRenderer";
 import {
@@ -646,6 +649,7 @@ export default function TeachingMaterialEditor() {
     window.setTimeout(() => setSaveStatus("idle"), 1200);
   }, []);
 
+
   // state
   const [sections, setSections] = useState<Section[]>([]);
   const [isOutlineApproved, setIsOutlineApproved] = useState<boolean>(() => {
@@ -681,6 +685,22 @@ export default function TeachingMaterialEditor() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [projectTitle, setProjectTitle] = useState("Dự án bài giảng");
+
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    return (localStorage.getItem("theme") as "light" | "dark") || "light";
+  });
+  const [editMode, setEditMode] = useState<boolean>(true);
+
+  const toggleTheme = () => {
+    const nextTheme = theme === "light" ? "dark" : "light";
+    setTheme(nextTheme);
+    localStorage.setItem("theme", nextTheme);
+    if (nextTheme === "dark") {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+  };
   const [outlinePrompt, setOutlinePrompt] = useState("");
   const [isGeneratingOutline, setIsGeneratingOutline] = useState(false);
 
@@ -802,6 +822,10 @@ export default function TeachingMaterialEditor() {
       setHighlightedChunksBySection({});
       setEvaluationBySection(persistedEvaluations);
       setSections(merged);
+      if (merged.length > 0) {
+        setIsOutlineApproved(true);
+        localStorage.setItem(`rag.outline.approved.${projectId}`, "true");
+      }
       setOutlinePrompt(draft?.outlinePrompt || "");
       setActiveSectionId((prev) => {
         const sectionFromQuery = initialSectionFromQueryRef.current;
@@ -1446,15 +1470,15 @@ export default function TeachingMaterialEditor() {
             return generated;
           })(),
           {
-            loading: "Đang tạo nội dung section...",
+            loading: `Đang tạo nội dung cho mục "${target?.title || "chi tiết"}"...`,
             success: (data) => {
               if (data && data.is_structure_update) {
-                return "Cập nhật cấu trúc mục lục thành công!";
+                return `Cập nhật cấu trúc mục lục cho mục "${target?.title || "chi tiết"}" thành công!`;
               }
-              return "Tạo nội dung section thành công.";
+              return `Tạo nội dung mục "${target?.title || "chi tiết"}" thành công.`;
             },
             error: (err) =>
-              err instanceof Error ? err.message : "Generate section thất bại",
+              err instanceof Error ? err.message : `Tạo nội dung mục "${target?.title || "chi tiết"}" thất bại`,
           },
         );      } catch (e) {
         setSectionLocal(sectionId, { isGenerating: false });
@@ -1524,7 +1548,14 @@ export default function TeachingMaterialEditor() {
           })(),
           {
             loading: `Đang tạo nhóm mục ${groupId === "INTRO_GROUP" ? "Mở đầu" : "Kết thúc"}...`,
-            success: "Đã tạo xong nhóm mục!",
+            success: () => {
+              const generatedTitles = sectionIds
+                .map((sid) => sections.find((s) => s.id === sid)?.title)
+                .filter(Boolean)
+                .map((t) => `"${t}"`)
+                .join(", ");
+              return `Đã tạo xong các mục: ${generatedTitles}`;
+            },
             error: (err: unknown) =>
               err instanceof Error ? err.message : "Không thể tạo nhóm mục",
           },
@@ -1710,7 +1741,6 @@ export default function TeachingMaterialEditor() {
       window.open(
         `/materials/${projectId}/preview${sectionParam}`,
         "_blank",
-        "noopener,noreferrer",
       );
     } catch (e) {
       setError(
@@ -1745,7 +1775,7 @@ export default function TeachingMaterialEditor() {
       .filter((s) => s.length > 10)
       .join("\n\n");
     if (!lessonContent.trim()) {
-      toastService.error("Bài giảng chưa có nội dung. Hãy sinh nội dung trước khi luyện tập quiz.");
+      toastService.error("Bài giảng chưa có nội dung. Hãy sinh nội dung trước khi tạo quiz.");
       return;
     }
     try {
@@ -1765,7 +1795,7 @@ export default function TeachingMaterialEditor() {
         JSON.stringify({ projectId, lessonContent, numQuestions: 5 }),
       );
     }
-    window.open("/quiz", "_blank", "noopener,noreferrer");
+    window.location.href = "/quiz";
   };
 
 
@@ -1845,6 +1875,15 @@ export default function TeachingMaterialEditor() {
     }
   }, [activeContextTab, activeSectionId, loadHistory]);
 
+  useEffect(() => {
+    const currentTheme = localStorage.getItem("theme") || "light";
+    if (currentTheme === "dark") {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+  }, []);
+
   const handleRestoreHistory = async (historyId: number) => {
     if (!projectId || !activeSectionId) return;
     try {
@@ -1868,49 +1907,71 @@ export default function TeachingMaterialEditor() {
   };
 
   return (
-    <div className="h-screen w-full flex flex-col bg-slate-50 overflow-hidden">
+    <div className="h-screen w-full flex flex-col bg-slate-50 dark:bg-slate-950 overflow-hidden text-slate-800 dark:text-slate-100">
       {/* 1. Navbar */}
-      <header className="h-16 bg-white/80 backdrop-blur-md border-b border-slate-200/60 flex items-center justify-between px-6 shrink-0 sticky top-0 z-30 shadow-sm shadow-slate-100/50">
+      <header className="h-16 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200/60 dark:border-slate-800/80 flex items-center justify-between px-6 shrink-0 sticky top-0 z-30 shadow-sm shadow-slate-100/50 dark:shadow-none">
         <div className="flex items-center gap-4 flex-1 min-w-0 mr-4">
           <button
             onClick={() => void handleBackToList()}
-            className="flex items-center gap-2 text-slate-600 hover:text-blue-600 font-medium transition-all duration-200 shrink-0 text-sm bg-slate-50 hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-slate-200/60"
+            className="flex items-center gap-2 h-9 px-3 text-slate-500 hover:text-slate-800 hover:bg-slate-100 active:bg-slate-200 dark:text-slate-400 dark:hover:text-slate-100 dark:hover:bg-slate-850 dark:active:bg-slate-800 rounded-lg font-medium transition-all duration-200 shrink-0 text-sm focus:outline-none focus:ring-2 focus:ring-slate-500/10"
           >
             <ArrowLeft size={16} />
             <span>Quay lại</span>
           </button>
-          <div className="h-5 w-px bg-slate-200 shrink-0"></div>
-          <h1 className="font-bold text-slate-800 text-lg flex items-center gap-2 min-w-0">
+          <div className="h-5 w-px bg-slate-200 dark:bg-slate-800 shrink-0"></div>
+          <h1 className="font-bold text-slate-800 dark:text-slate-100 text-lg flex items-center gap-2 min-w-0">
             <FileText size={20} className="text-blue-600 shrink-0" />
             <span className="truncate max-w-[200px] lg:max-w-[320px]" title={projectTitle}>{projectTitle}</span>
           </h1>
 
           {/* Auto Save Status */}
-          <div className="ml-4 flex items-center text-xs font-medium shrink-0 bg-slate-50 px-2.5 py-1 rounded-full border border-slate-100">
+          <div className="ml-4 flex items-center shrink-0 bg-slate-100 text-slate-600 text-[11px] px-2.5 py-0.5 rounded-full font-medium h-5">
             {saveStatus === "saving" && (
-              <span className="text-amber-600 flex items-center gap-1.5">
-                <Loader2 size={12} className="animate-spin" /> Đang lưu...
+              <span className="text-amber-700 flex items-center gap-1">
+                <Loader2 size={10} className="animate-spin" /> Đang lưu...
               </span>
             )}
             {saveStatus === "saved" && (
-              <span className="text-emerald-600 flex items-center gap-1.5">
-                <CheckCircle2 size={12} /> Đã lưu
+              <span className="text-emerald-700 flex items-center gap-1">
+                <CheckCircle2 size={10} /> Đã lưu
               </span>
             )}
             {saveStatus === "idle" && (
-              <span className="text-slate-400 flex items-center gap-1.5">
-                <div className="h-1.5 w-1.5 rounded-full bg-slate-300"></div> Đã đồng bộ
+              <span className="text-slate-600 flex items-center gap-1">
+                Đã đồng bộ
               </span>
             )}
           </div>
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Global Theme Toggle (Trắng/Đen) */}
+          <button
+            onClick={toggleTheme}
+            className="flex items-center justify-center h-9 w-9 text-slate-500 hover:text-slate-800 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg transition-all duration-200 focus:outline-none"
+            title={theme === "light" ? "Chuyển sang nền tối (Dark mode)" : "Chuyển sang nền sáng (Light mode)"}
+          >
+            {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
+          </button>
+
           {isOutlineApproved && (
             <>
+              {/* Edit/Reader Mode Toggle */}
+              <button
+                onClick={() => setEditMode(!editMode)}
+                className={`flex items-center gap-1.5 h-9 px-3 border rounded-lg font-medium transition duration-200 text-sm shadow-sm focus:outline-none ${
+                  editMode
+                    ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800"
+                    : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-800 dark:hover:bg-slate-800"
+                }`}
+                title={editMode ? "Chuyển sang Chế độ Đọc (Ẩn mã nguồn Markdown)" : "Chuyển sang Chế độ Sửa (Hiện mã nguồn Markdown)"}
+              >
+                <Edit3 size={15} />
+                <span>{editMode ? "Chế độ Sửa" : "Chế độ Đọc"}</span>
+              </button>
               <button
                 onClick={() => void handleOpenPreviewTab()}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg font-medium transition duration-200 text-sm shadow-sm"
+                className="flex items-center gap-1.5 h-9 px-3.5 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg font-medium transition duration-200 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-500/10"
               >
                 <Eye size={15} />
                 <span>Xem trước</span>
@@ -1918,19 +1979,19 @@ export default function TeachingMaterialEditor() {
 
               <button
                 onClick={() => handleOpenQuizTab()}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg font-medium transition duration-200 text-sm shadow-sm"
+                className="flex items-center gap-1.5 h-9 px-3.5 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg font-medium transition duration-200 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-500/10"
               >
                 <HelpCircle size={15} className="text-violet-500" />
-                <span>Luyện tập Quiz</span>
+                <span>Tạo Quiz</span>
               </button>
               
               <div className="relative" ref={downloadMenuRef}>
                 <button
                   onClick={() => setIsDownloadMenuOpen((prev) => !prev)}
                   disabled={Boolean(exportingFormat)}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition duration-200 text-sm shadow-sm hover:shadow shadow-blue-500/10 disabled:opacity-60"
+                  className="flex items-center gap-1.5 h-9 px-3.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-lg font-medium transition duration-200 text-sm shadow-sm hover:shadow focus:outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60"
                 >
-                  <Sparkles size={15} />
+                  <Download size={15} />
                   <span>Tải về</span>
                   <ChevronDown size={14} className={`transition-transform duration-200 ${isDownloadMenuOpen ? 'rotate-180' : ''}`} />
                 </button>
@@ -1962,10 +2023,10 @@ export default function TeachingMaterialEditor() {
               </div>
               <button
                 onClick={() => setShowContext(!showContext)}
-                className={`p-2 rounded-lg transition-all duration-200 ${
+                className={`h-9 w-9 flex items-center justify-center rounded-lg transition-all duration-200 ${
                   showContext 
                     ? "bg-blue-50 text-blue-600 border border-blue-100" 
-                    : "text-slate-500 hover:bg-slate-100 border border-transparent"
+                    : "text-slate-500 hover:bg-slate-100 border border-slate-200 bg-white"
                 }`}
               >
                 <PanelRight size={18} />
@@ -2022,7 +2083,7 @@ export default function TeachingMaterialEditor() {
                   className={`px-5 py-2.5 rounded-xl font-bold transition-all duration-200 flex items-center gap-2 ${
                     isGeneratingOutline 
                       ? "bg-slate-100 text-slate-400 border border-transparent cursor-not-allowed" 
-                      : "bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-500/10 hover:shadow-lg hover:shadow-blue-500/20"
+                      : "bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:via-indigo-700 hover:to-purple-700 text-white shadow-md shadow-indigo-500/20 hover:shadow-lg hover:shadow-indigo-500/30"
                   }`}
                 >
                   {isGeneratingOutline ? (
@@ -2043,8 +2104,11 @@ export default function TeachingMaterialEditor() {
             <div className="w-full max-w-5xl bg-white border border-slate-200/85 rounded-2xl p-8 shadow-xl border-slate-100 animate-in fade-in duration-200">
               <div className="flex items-start justify-between border-b border-slate-100 pb-5 mb-6">
                 <div>
-                  <h2 className="text-xl font-extrabold text-slate-800 font-display">
-                    📋 Phê duyệt Cấu trúc Mục lục
+                  <h2 className="text-xl font-extrabold text-slate-800 dark:text-slate-100 font-display flex items-center gap-3">
+                    <div className="bg-blue-600 p-2 rounded-xl shadow-sm shadow-blue-200 shrink-0">
+                      <BookOpen size={20} className="text-white" />
+                    </div>
+                    <span>Phê duyệt Cấu trúc Mục lục</span>
                   </h2>
                   <p className="text-slate-500 text-xs mt-1.5 leading-relaxed">
                     Kiểm tra khung cấu trúc chương/bài dưới đây. Kéo thả để sắp xếp lại, hoặc chọn một đề mục để làm mục cha để chèn các tiểu mục con mới ngay dưới mục đó.
@@ -2107,8 +2171,8 @@ export default function TeachingMaterialEditor() {
                       }}
                       className={`group flex items-center justify-between py-2.5 px-4 rounded-xl border cursor-pointer transition-all duration-200 ${
                         isSelected
-                          ? "bg-blue-50/80 border-blue-200 text-blue-800 shadow-sm font-semibold"
-                          : "bg-white border-slate-100 text-slate-600 hover:bg-slate-50 hover:border-slate-200"
+                          ? "bg-blue-50/80 border-blue-200 text-blue-800 dark:bg-blue-950/40 dark:border-blue-900/50 dark:text-blue-300 shadow-sm font-semibold"
+                          : "bg-white border-slate-100 dark:bg-slate-900/50 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 hover:border-slate-200 dark:hover:bg-slate-900"
                       } ${
                         isDropTarget ? "ring-2 ring-blue-200 bg-blue-50/70" : ""
                       } ${isDragging ? "opacity-60" : ""}`}
@@ -2117,20 +2181,29 @@ export default function TeachingMaterialEditor() {
                       <div className="flex items-center gap-2.5 min-w-0 flex-1">
                         <GripVertical
                           size={14}
-                          className="text-slate-300 opacity-0 group-hover:opacity-100 cursor-grab shrink-0 transition-opacity duration-150"
+                          className="text-slate-300 dark:text-slate-600 opacity-0 group-hover:opacity-100 cursor-grab shrink-0 transition-opacity duration-150"
                         />
                         {s.level === 1 ? (
-                          <BookOpen size={14} className="text-blue-600 shrink-0" />
+                          <BookOpen size={14} className="text-blue-600 dark:text-blue-400 shrink-0" />
                         ) : (
-                          <span className="text-slate-300 font-mono text-sm shrink-0 select-none">
+                          <span className="text-slate-300 dark:text-slate-700 font-mono text-sm shrink-0 select-none">
                             {s.level === 2 ? "├─" : "└─"}
                           </span>
                         )}
-                        <span className={`text-sm truncate ${
-                          s.level === 1 ? "font-bold text-slate-800" : s.level === 2 ? "font-semibold text-slate-700" : "text-slate-500"
-                        }`}>
-                          {s.title}
-                        </span>
+                        <input
+                          type="text"
+                          value={s.title}
+                          onChange={(e) => updateSection(s.id, { title: e.target.value })}
+                          onClick={(e) => e.stopPropagation()}
+                          className={`bg-transparent border-none outline-none focus:ring-1 focus:ring-blue-400 dark:focus:ring-blue-500 focus:bg-white dark:focus:bg-slate-800 px-1.5 py-0.5 rounded text-sm w-full min-w-0 transition-all duration-150 ${
+                            s.level === 1
+                              ? "font-bold text-slate-800 dark:text-slate-100"
+                              : s.level === 2
+                              ? "font-semibold text-slate-700 dark:text-slate-200"
+                              : "text-slate-500 dark:text-slate-400"
+                          }`}
+                          title="Click để sửa nhanh tiêu đề"
+                        />
                       </div>
                       
                       <div className="flex items-center gap-2 shrink-0">
@@ -2140,7 +2213,7 @@ export default function TeachingMaterialEditor() {
                               e.stopPropagation();
                               void handleInsertSectionAfter(s.order);
                             }}
-                            className="text-slate-400 hover:text-blue-600 p-1 hover:bg-slate-100 rounded-lg transition-all duration-150"
+                            className="text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-all duration-150"
                             title="Chèn mục phía dưới"
                           >
                             <Plus size={14} />
@@ -2150,13 +2223,13 @@ export default function TeachingMaterialEditor() {
                               e.stopPropagation();
                               void handleDeleteSection(s.id);
                             }}
-                            className="text-slate-400 hover:text-red-500 p-1 hover:bg-slate-100 rounded-lg transition-all duration-150"
+                            className="text-slate-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-all duration-150"
                             title="Xóa mục"
                           >
                             <Trash2 size={14} />
                           </button>
                         </div>
-                        <span className="text-[10px] font-bold text-slate-400 px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200/50">
+                        <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200/50 dark:border-slate-700/50">
                           Cấp {s.level}
                         </span>
                       </div>
@@ -2523,8 +2596,8 @@ export default function TeachingMaterialEditor() {
                             activeSection.isGenerating 
                               ? "bg-slate-100 text-slate-400 cursor-not-allowed border border-transparent" 
                               : activeSection.content 
-                                ? "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300" 
-                                : "bg-blue-600 hover:bg-blue-700 text-white shadow-blue-500/10 hover:shadow-lg hover:shadow-blue-500/20"
+                                ? "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-800 dark:hover:bg-slate-800" 
+                                : "bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:via-indigo-700 hover:to-purple-700 text-white shadow-md shadow-indigo-500/20 hover:shadow-lg hover:shadow-indigo-500/30"
                           }`}
                         >
                           {activeSection.isGenerating ? (
@@ -2534,7 +2607,7 @@ export default function TeachingMaterialEditor() {
                             </>
                           ) : (
                             <>
-                              <Play size={14} />
+                              <Sparkles size={14} className="text-white shrink-0" />
                               <span>{activeSection.content ? "Tạo lại" : "Tạo nội dung"}</span>
                             </>
                           )}
@@ -2641,25 +2714,27 @@ export default function TeachingMaterialEditor() {
                 {/* Markdown Editor */}
                 <div className="flex-1 flex flex-col md:flex-row overflow-hidden w-full min-w-0">
                   {/* Textarea */}
-                  <div className="w-full md:w-[42%] flex flex-col h-full bg-slate-50/50 relative shrink min-w-0">
-                    <div className="h-10 bg-slate-50 flex items-center px-6 border-b border-slate-100 text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0">
-                      Markdown
+                  {editMode && (
+                    <div className="w-full md:w-[42%] flex flex-col h-full bg-slate-50/50 dark:bg-slate-900/30 relative shrink min-w-0 border-r border-slate-200/60 dark:border-slate-800">
+                      <div className="h-10 bg-slate-50 dark:bg-slate-900/50 flex items-center px-6 border-b border-slate-100 dark:border-slate-800 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider shrink-0">
+                        Markdown
+                      </div>
+                      <textarea
+                        value={activeSection.content}
+                        onChange={(e) =>
+                          updateSection(activeSection.id, {
+                            content: e.target.value,
+                          })
+                        }
+                        className="flex-1 w-full bg-transparent p-6 outline-none resize-none text-slate-700 dark:text-slate-200 font-mono text-xs leading-relaxed focus:bg-slate-50/20 dark:focus:bg-slate-900/20 transition-all duration-200"
+                        placeholder="Chạy AI tạo hoặc nhập nội dung Markdown thủ công..."
+                      />
                     </div>
-                    <textarea
-                      value={activeSection.content}
-                      onChange={(e) =>
-                        updateSection(activeSection.id, {
-                          content: e.target.value,
-                        })
-                      }
-                      className="flex-1 w-full bg-transparent p-6 outline-none resize-none text-slate-700 font-mono text-xs leading-relaxed focus:bg-slate-50/20 transition-all duration-200"
-                      placeholder="Chạy AI tạo hoặc nhập nội dung Markdown thủ công..."
-                    />
-                  </div>
+                  )}
 
                   {/* Live Preview */}
-                  <div className="flex-1 flex flex-col h-full bg-white relative border-l border-slate-100 min-w-0">
-                    <div className="h-10 bg-white flex items-center justify-between px-6 border-b border-slate-100 text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0">
+                  <div className={`flex-1 flex flex-col h-full bg-white dark:bg-slate-950 relative min-w-0 ${editMode ? "border-l border-slate-100 dark:border-slate-800" : ""}`}>
+                    <div className="h-10 bg-white dark:bg-slate-950 flex items-center justify-between px-6 border-b border-slate-100 dark:border-slate-800 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider shrink-0">
                       <span>Preview</span>
                       <button
                         onClick={() =>
@@ -2667,7 +2742,7 @@ export default function TeachingMaterialEditor() {
                         }
                         className={`flex items-center gap-1.5 transition-colors duration-200 ${
                           showCitationsInPreview
-                            ? "text-blue-600 hover:text-blue-700"
+                            ? "text-blue-600 dark:text-blue-400 hover:text-blue-700"
                             : "text-slate-400 hover:text-slate-600"
                         }`}
                         title={
@@ -2684,7 +2759,7 @@ export default function TeachingMaterialEditor() {
                         <span>{showCitationsInPreview ? "Hiện nguồn" : "Ẩn nguồn"}</span>
                       </button>
                     </div>
-                    <div className="flex-1 p-6 overflow-y-auto prose markdown-preview max-w-none text-slate-800 bg-white custom-scrollbar">
+                    <div className="flex-1 p-6 overflow-y-auto prose dark:prose-invert markdown-preview max-w-none text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-950 custom-scrollbar">
                       {activeSection.content ? (
                         <EnhancedMarkdownRenderer
                           content={previewContent}

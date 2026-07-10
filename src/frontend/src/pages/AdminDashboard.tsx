@@ -4,17 +4,20 @@ import {
   FileText,
   Activity,
   Trash2,
-  ShieldCheck,
   LogOut,
-  Server,
   TerminalSquare,
   Search,
   Eye,
   Menu,
   X,
-  ArrowLeft
+  LayoutDashboard,
+  HelpCircle,
+  Coins,
+  Cpu,
+  BookOpen
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { getAvatarUrl } from "../utils/user_avatar";
 import {
   XAxis,
   YAxis,
@@ -22,7 +25,13 @@ import {
   Tooltip as RechartsTooltip,
   ResponsiveContainer,
   BarChart,
-  Bar
+  Bar,
+  AreaChart,
+  Area,
+  PieChart,
+  Pie,
+  Cell,
+  Legend
 } from "recharts";
 import ReactMarkdown from "react-markdown";
 import {
@@ -30,6 +39,7 @@ import {
   adminGetDocuments,
   adminGetUsage,
   adminGetLogs,
+  adminGetStats,
   adminDeleteDocument,
   adminDeleteUser,
   adminSetUserLocked,
@@ -40,18 +50,28 @@ import {
   type AdminDocument,
   type AdminUsageEntry,
   type AdminLogEntry,
+  type AdminStats,
 } from "../services/api";
 
-type TabKey = "users" | "documents" | "usage" | "logs";
+type TabKey = "overview" | "users" | "documents" | "usage" | "logs";
+
+const formatFileSize = (bytes?: number) => {
+  if (bytes === undefined || bytes === null || bytes === 0) return "—";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+};
 
 export default function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState<TabKey>("users");
+  const [activeTab, setActiveTab] = useState<TabKey>("overview");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [documents, setDocuments] = useState<AdminDocument[]>([]);
   const [usage, setUsage] = useState<AdminUsageEntry[]>([]);
   const [logs, setLogs] = useState<AdminLogEntry[]>([]);
+  const [stats, setStats] = useState<AdminStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [userActionLoadingId, setUserActionLoadingId] = useState<number | null>(null);
   
@@ -67,10 +87,6 @@ export default function AdminDashboard() {
   const [previewLoading, setPreviewLoading] = useState(false);
 
   const currentUser = getStoredAuthUser();
-
-  // Derived state (Summary)
-  const totalTokens = useMemo(() => usage.reduce((sum, u) => sum + (u.token_usage || 0), 0), [usage]);
-  const totalLlmCalls = useMemo(() => usage.reduce((sum, u) => sum + (u.llm_calls || 0), 0), [usage]);
 
   // Derived state (Filtered)
   const filteredUsers = useMemo(() => {
@@ -101,14 +117,58 @@ export default function AdminDashboard() {
     return Object.values(grouped).reverse();
   }, [logs]);
 
+  // Derived state (Document format distribution chart)
+  const documentFormatChartData = useMemo(() => {
+    const counts: Record<string, number> = { PDF: 0, Word: 0, Text: 0, Markdown: 0 };
+    documents.forEach(doc => {
+      const ext = doc.original_filename.split(".").pop()?.toLowerCase();
+      if (ext === "pdf") counts["PDF"]++;
+      else if (ext === "docx" || ext === "doc") counts["Word"]++;
+      else if (ext === "txt") counts["Text"]++;
+      else if (ext === "md") counts["Markdown"]++;
+    });
+    return Object.entries(counts)
+      .map(([name, value]) => ({ name, value }))
+      .filter(item => item.value > 0);
+  }, [documents]);
+
+  // Derived state (AI Calls Trend for Overview page)
+  const usageTrendChartData = useMemo(() => {
+    const grouped: Record<string, { date: string, llmCalls: number }> = {};
+    logs.forEach(log => {
+      const dateStr = new Date(log.created_at).toLocaleDateString("vi-VN", { month: "numeric", day: "numeric" });
+      if (!grouped[dateStr]) grouped[dateStr] = { date: dateStr, llmCalls: 0 };
+      grouped[dateStr].llmCalls += (log.llm_calls || 0);
+    });
+    return Object.values(grouped).reverse().slice(-7); // Last 7 days trend
+  }, [logs]);
 
   useEffect(() => {
-    if (activeTab === "users") loadUsers();
+    if (activeTab === "overview") loadStats();
+    else if (activeTab === "users") loadUsers();
     else if (activeTab === "documents") loadDocuments();
     else if (activeTab === "usage") loadUsage();
     else if (activeTab === "logs") loadLogs();
   }, [activeTab]);
 
+  const loadStats = async () => {
+    setLoading(true);
+    try {
+      const [statsData, usersData, docsData, logsData] = await Promise.all([
+        adminGetStats(),
+        adminGetUsers(),
+        adminGetDocuments(),
+        adminGetLogs(),
+      ]);
+      setStats(statsData);
+      setUsers(usersData);
+      setDocuments(docsData);
+      setLogs(logsData);
+    } catch (e) {
+    } finally {
+      setLoading(false);
+    }
+  };
   const loadUsers = async () => {
     setLoading(true);
     try {
@@ -249,19 +309,16 @@ export default function AdminDashboard() {
         className={`fixed lg:static inset-y-0 left-0 z-30 w-72 bg-white text-gray-800 border-r border-gray-200 transform transition-transform duration-300 ease-in-out flex flex-col ${isSidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}
       >
         <div className="p-6 border-b border-gray-200 flex justify-between items-center bg-gray-50/50">
-          <div className="flex items-center gap-3">
-            <div className="bg-purple-600 p-2 rounded-lg">
-              <ShieldCheck size={24} className="text-white" />
+          <Link to="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+            <div className="bg-blue-600 p-2 rounded-xl shadow-sm shadow-blue-200">
+              <BookOpen size={24} className="text-white" />
             </div>
             <div>
               <h1 className="text-lg font-bold text-gray-900 leading-tight">
-                Admin CMS
+                EduRAG
               </h1>
-              <p className="text-xs text-purple-600 font-medium">
-                Control Panel
-              </p>
             </div>
-          </div>
+          </Link>
           <button
             className="lg:hidden text-gray-400 hover:text-gray-600"
             onClick={() => setIsSidebarOpen(false)}
@@ -274,34 +331,28 @@ export default function AdminDashboard() {
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4 px-2">
               Quản trị hệ thống
             </p>
-            <NavItem icon={Users} label="Lịch sử Người dùng" tabKey="users" />
+            <NavItem icon={LayoutDashboard} label="Thống kê hệ thống" tabKey="overview" />
+            <NavItem icon={Users} label="Quản lý người dùng" tabKey="users" />
             <NavItem
               icon={FileText}
-              label="Kho Tài liệu chung"
+              label="Quản lý tài liệu"
               tabKey="documents"
             />
             <NavItem icon={Activity} label="Thống kê API Usage" tabKey="usage" />
             <NavItem icon={TerminalSquare} label="System Logs" tabKey="logs" />
           </div>
-          
-          <div className="pt-4 border-t border-gray-100 mt-auto">
-            <Link
-              to="/"
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 text-blue-600 hover:bg-blue-50/80 font-bold text-sm"
-            >
-              <ArrowLeft size={20} /> <span>Về ứng dụng chính</span>
-            </Link>
-          </div>
         </div>
         <div className="p-4 border-t border-gray-200 bg-gray-50/30">
-          <div className="bg-gray-50 rounded-xl p-4 flex flex-col items-center border border-gray-100">
-            <div className="w-12 h-12 bg-purple-500/10 rounded-full flex items-center justify-center text-purple-600 font-bold text-lg mb-2">
-              {currentUser?.username?.charAt(0).toUpperCase() || "A"}
-            </div>
+          <div className="bg-gray-50 rounded-xl p-4 flex flex-col items-center border border-slate-200">
+            <img
+              src={getAvatarUrl(currentUser)}
+              alt="Avatar"
+              className="w-12 h-12 rounded-full object-cover border border-gray-200 shadow-sm mb-2"
+            />
             <p className="text-sm font-bold text-gray-900 truncate w-full text-center">
               {currentUser?.username || "Admin"}
             </p>
-            <p className="text-xs text-gray-500 mb-4">Super Admin</p>
+            <p className="text-xs text-gray-500 mb-4">Admin</p>
             <button
               onClick={handleLogout}
               className="flex items-center gap-2 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 border border-transparent hover:border-red-100 py-2 px-4 rounded-lg w-full justify-center transition-colors font-medium"
@@ -321,59 +372,180 @@ export default function AdminDashboard() {
               <Menu size={24} />
             </button>
             <h2 className="text-xl font-bold text-gray-800 hidden sm:block">
-              {activeTab === "users" && "Danh sách người dùng"}
-              {activeTab === "documents" && "Kho tài liệu toàn hệ thống"}
+              {activeTab === "overview" && "Thống kê hệ thống"}
+              {activeTab === "users" && "Quản lý người dùng"}
+              {activeTab === "documents" && "Quản lý tài liệu"}
               {activeTab === "usage" && "Thống kê & API Usage"}
               {activeTab === "logs" && "Logs hệ thống"}
             </h2>
           </div>
           <div className="flex items-center">
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium bg-purple-50 text-purple-700 border border-purple-100">
-              <Server size={16} className="text-purple-600" />
-              <span className="hidden sm:inline">Admin Node</span>
-            </div>
           </div>
         </header>
-        <main className="flex-1 overflow-auto p-4 lg:p-8 bg-slate-50/70">
+        <main className="flex-1 overflow-auto p-4 lg:p-8 bg-slate-100/60">
           <div className="max-w-7xl mx-auto h-full flex flex-col gap-6">
-            {/* Summary Cards */}
-            {activeTab === "usage" && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <div className="bg-white/70 backdrop-blur-md border border-gray-200/50 rounded-2xl p-5 shadow-sm">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><Users size={20} /></div>
-                    <h3 className="font-medium text-gray-500 text-sm">Tổng Người Dùng</h3>
+            {/* Summary Cards & Charts */}
+            {activeTab === "overview" && (
+              <div className="flex flex-col gap-6 w-full animate-in fade-in slide-in-from-bottom-4 duration-500">
+                {/* Summary Cards Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex items-center gap-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-md hover:border-slate-300/80">
+                    <div className="p-4 bg-blue-50 text-blue-600 rounded-2xl border border-blue-100/50 shrink-0">
+                      <Users size={26} />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Tổng người dùng</h3>
+                      <p className="text-3xl font-extrabold text-gray-900 mt-1 leading-tight">{stats?.total_users ?? 0}</p>
+                    </div>
                   </div>
-                  <p className="text-2xl font-bold text-gray-900">{users.length}</p>
+
+                  <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex items-center gap-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-md hover:border-slate-300/80">
+                    <div className="p-4 bg-indigo-50 text-indigo-600 rounded-2xl border border-indigo-100/50 shrink-0">
+                      <FileText size={26} />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Tổng số dự án</h3>
+                      <p className="text-3xl font-extrabold text-gray-900 mt-1 leading-tight">{stats?.total_projects ?? 0}</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex items-center gap-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-md hover:border-slate-300/80">
+                    <div className="p-4 bg-emerald-50 text-emerald-600 rounded-2xl border border-emerald-100/50 shrink-0">
+                      <FileText size={26} />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Tổng tài liệu</h3>
+                      <p className="text-3xl font-extrabold text-gray-900 mt-1 leading-tight">{stats?.total_documents ?? 0}</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex items-center gap-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-md hover:border-slate-300/80">
+                    <div className="p-4 bg-amber-50 text-amber-600 rounded-2xl border border-amber-100/50 shrink-0">
+                      <HelpCircle size={26} />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Ngân hàng câu hỏi</h3>
+                      <p className="text-3xl font-extrabold text-gray-900 mt-1 leading-tight">{stats?.total_quizzes ?? 0}</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex items-center gap-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-md hover:border-slate-300/80">
+                    <div className="p-4 bg-rose-50 text-rose-600 rounded-2xl border border-rose-100/50 shrink-0">
+                      <Cpu size={26} />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Tổng lượt gọi AI</h3>
+                      <p className="text-3xl font-extrabold text-gray-900 mt-1 leading-tight">{(stats?.total_llm_calls ?? 0).toLocaleString("vi-VN")}</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex items-center gap-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-md hover:border-slate-300/80">
+                    <div className="p-4 bg-teal-50 text-teal-600 rounded-xl border border-teal-100/50 shrink-0">
+                      <Coins size={26} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Tổng số token</h3>
+                      <div className="flex items-baseline gap-3 flex-wrap mt-1">
+                        <p className="text-2xl font-extrabold text-gray-900">
+                          {(stats?.total_tokens ?? 0).toLocaleString("vi-VN")}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div className="bg-white/70 backdrop-blur-md border border-gray-200/50 rounded-2xl p-5 shadow-sm">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="p-2 bg-purple-50 text-purple-600 rounded-lg"><FileText size={20} /></div>
-                    <h3 className="font-medium text-gray-500 text-sm">Tổng Tài Liệu</h3>
+
+                {/* Charts Section */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  {/* Left Area Chart - AI Calls Trend */}
+                  <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+                    <h3 className="font-bold text-gray-800 text-sm mb-4">Xu hướng gọi LLM</h3>
+                    <div className="w-full h-72">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={usageTrendChartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                          <defs>
+                            <linearGradient id="colorCalls" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.2}/>
+                              <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                          <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748b' }} />
+                          <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748b' }} />
+                          <RechartsTooltip contentStyle={{ borderRadius: '12px', border: '1px solid #f1f5f9', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.05)' }} />
+                          <Legend verticalAlign="top" height={36} iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
+                          <Area type="monotone" dataKey="llmCalls" name="Số cuộc gọi LLM" stroke="#8b5cf6" strokeWidth={2} fillOpacity={1} fill="url(#colorCalls)" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
                   </div>
-                  <p className="text-2xl font-bold text-gray-900">{documents.length}</p>
-                </div>
-                <div className="bg-white/70 backdrop-blur-md border border-gray-200/50 rounded-2xl p-5 shadow-sm">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="p-2 bg-amber-50 text-amber-600 rounded-lg"><Activity size={20} /></div>
-                    <h3 className="font-medium text-gray-500 text-sm">Tổng LLM Calls</h3>
+
+                  {/* Right Doughnut Chart - Document Formats */}
+                  <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+                    <h3 className="font-bold text-gray-800 text-sm mb-4">Phân bổ định dạng RAG</h3>
+                    <div className="h-56 w-full relative flex-1 min-h-[220px]">
+                      {documentFormatChartData.length >= 2 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={documentFormatChartData}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={60}
+                              outerRadius={80}
+                              paddingAngle={4}
+                              dataKey="value"
+                            >
+                              {documentFormatChartData.map((_, index) => {
+                                const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ec4899"];
+                                return <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />;
+                              })}
+                            </Pie>
+                            <RechartsTooltip contentStyle={{ borderRadius: '12px', border: '1px solid #f1f5f9', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.05)' }} />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      ) : documentFormatChartData.length === 1 ? (
+                        <div className="h-full flex flex-col items-center justify-center p-4 text-center">
+                          <div className="p-4 bg-blue-50 text-blue-600 rounded-2xl mb-3 border border-blue-100/50">
+                            <FileText size={32} />
+                          </div>
+                          <span className="text-2xl font-black text-slate-800">
+                            {documentFormatChartData[0].name}: {documentFormatChartData[0].value} tệp
+                          </span>
+                          <span className="text-xs text-slate-500 mt-2 font-medium">
+                            100% tài liệu hiện có thuộc định dạng {documentFormatChartData[0].name}.
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="h-full flex flex-col items-center justify-center p-4 text-center border border-dashed border-gray-200 rounded-xl bg-gray-50/50">
+                          <FileText size={32} className="text-gray-300 mb-2" />
+                          <span className="text-sm font-semibold text-gray-500">Chưa tải tài liệu nào</span>
+                          <span className="text-xs text-gray-400 mt-1">Hỗ trợ các định dạng PDF, DOCX, TXT, MD.</span>
+                        </div>
+                      )}
+                    </div>
+                    {/* Legend (only shown when >= 2 formats exist) */}
+                    {documentFormatChartData.length >= 2 && (
+                      <div className="grid grid-cols-2 gap-2 text-xs font-semibold text-gray-600 mt-4 border-t border-gray-50 pt-4">
+                        {documentFormatChartData.map((item, index) => {
+                          const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ec4899"];
+                          return (
+                            <div key={item.name} className="flex items-center gap-2">
+                              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: COLORS[index % COLORS.length] }}></span>
+                              <span className="truncate">{item.name}: {item.value} tệp</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-                  <p className="text-2xl font-bold text-gray-900">{totalLlmCalls.toLocaleString()}</p>
-                </div>
-                <div className="bg-white/70 backdrop-blur-md border border-gray-200/50 rounded-2xl p-5 shadow-sm">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="p-2 bg-green-50 text-green-600 rounded-lg"><Server size={20} /></div>
-                    <h3 className="font-medium text-gray-500 text-sm">Tổng Tokens</h3>
-                  </div>
-                  <p className="text-2xl font-bold text-gray-900">{totalTokens.toLocaleString()}</p>
                 </div>
               </div>
             )}
 
             {activeTab === "users" && (
               <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                  <div className="p-6 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                  <div className="p-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full">
                       <h3 className="font-bold text-lg text-gray-900 whitespace-nowrap">
                         Người dùng ({filteredUsers.length})
@@ -384,14 +556,14 @@ export default function AdminDashboard() {
                           <input type="text" placeholder="Tìm kiếm..." value={searchUser} onChange={e => setSearchUser(e.target.value)} className="pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm w-full sm:w-64 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500" />
                         </div>
                         <select value={filterRole} onChange={e => setFilterRole(e.target.value as any)} className="py-2 pl-3 pr-8 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500">
-                          <option value="all">Tất cả Role</option>
-                          <option value="admin">Admin</option>
-                          <option value="user">User</option>
+                          <option value="all">Tất cả Vai trò</option>
+                          <option value="admin">Quản trị viên</option>
+                          <option value="user">Giảng viên</option>
                         </select>
                         <select value={filterStatus} onChange={e => setFilterStatus(e.target.value as any)} className="py-2 pl-3 pr-8 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500">
                           <option value="all">Tất cả Trạng thái</option>
-                          <option value="active">Active</option>
-                          <option value="locked">Locked</option>
+                          <option value="active">Hoạt động</option>
+                          <option value="locked">Đã khóa</option>
                         </select>
                       </div>
                     </div>
@@ -409,15 +581,17 @@ export default function AdminDashboard() {
                           <th className="px-6 py-4">ID</th>
                           <th className="px-6 py-4">Username</th>
                           <th className="px-6 py-4">Role</th>
-                          <th className="px-6 py-4">Status</th>
-                          <th className="px-6 py-4">Actions</th>
+                          <th className="px-6 py-4">Số Project</th>
+                          <th className="px-6 py-4">Số Tài liệu</th>
+                          <th className="px-6 py-4">Trạng thái</th>
+                          <th className="px-6 py-4">Hành động</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
                         {loading ? (
                           <tr>
                             <td
-                              colSpan={5}
+                              colSpan={7}
                               className="px-6 py-8 text-center text-gray-500"
                             >
                               Đang tải...
@@ -439,16 +613,22 @@ export default function AdminDashboard() {
                                   {u.role}
                                 </span>
                               </td>
+                              <td className="px-6 py-4 text-center font-semibold text-gray-700">
+                                {u.projects_count ?? 0}
+                              </td>
+                              <td className="px-6 py-4 text-center font-semibold text-gray-700">
+                                {u.documents_count ?? 0}
+                              </td>
                               <td className="px-6 py-4">
                                 {u.is_active ? (
                                   <span className="text-green-600 font-medium whitespace-nowrap">
                                     <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-2"></span>
-                                    Active
+                                    Hoạt động
                                   </span>
                                 ) : (
                                   <span className="text-red-600 font-medium whitespace-nowrap">
                                     <span className="inline-block w-2 h-2 rounded-full bg-red-500 mr-2"></span>
-                                    Locked
+                                    Đã khóa
                                   </span>
                                 )}
                               </td>
@@ -482,8 +662,8 @@ export default function AdminDashboard() {
             )}
             {activeTab === "documents" && (
               <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                  <div className="p-6 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                  <div className="p-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full">
                       <h3 className="font-bold text-lg text-gray-900 whitespace-nowrap">
                         Tài liệu ({filteredDocuments.length})
@@ -506,17 +686,19 @@ export default function AdminDashboard() {
                     <table className="w-full text-sm text-left">
                       <thead className="bg-gray-50 text-gray-600 font-medium border-b border-gray-200 uppercase text-xs">
                         <tr>
-                          <th className="px-6 py-4">File Name</th>
+                          <th className="px-6 py-4">Tên Tài liệu</th>
                           <th className="px-6 py-4">User ID</th>
                           <th className="px-6 py-4">Chunks</th>
-                          <th className="px-6 py-4">Actions</th>
+                          <th className="px-6 py-4">Dung lượng</th>
+                          <th className="px-6 py-4">Ngày tải</th>
+                          <th className="px-6 py-4">Hành động</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
                         {loading ? (
                           <tr>
                             <td
-                              colSpan={4}
+                              colSpan={6}
                               className="px-6 py-8 text-center text-gray-500"
                             >
                               Đang tải...
@@ -532,6 +714,18 @@ export default function AdminDashboard() {
                                 {doc.user_id}
                               </td>
                               <td className="px-6 py-4">{doc.chunks_count}</td>
+                              <td className="px-6 py-4 font-mono text-xs text-gray-600 whitespace-nowrap">
+                                {formatFileSize(doc.file_size)}
+                              </td>
+                              <td className="px-6 py-4 text-gray-500 whitespace-nowrap">
+                                {new Date(doc.created_at).toLocaleDateString("vi-VN", {
+                                  year: "numeric",
+                                  month: "2-digit",
+                                  day: "2-digit",
+                                  hour: "2-digit",
+                                  minute: "2-digit"
+                                })}
+                              </td>
                               <td className="px-6 py-4">
                                 <div className="flex items-center gap-2">
                                   <button
@@ -561,8 +755,8 @@ export default function AdminDashboard() {
             )}
             {activeTab === "usage" && (
               <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                  <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                  <div className="p-6 border-b border-slate-200 flex items-center justify-between">
                     <h3 className="font-bold text-lg text-gray-900">
                       Thống kê Tokens
                     </h3>{" "}
@@ -576,7 +770,7 @@ export default function AdminDashboard() {
                   
                   {/* Chart Section */}
                   {usageChartData.length > 0 && (
-                    <div className="p-6 border-b border-gray-100 bg-gray-50/30">
+                    <div className="p-6 border-b border-slate-200 bg-gray-50/30">
                       <h4 className="text-sm font-semibold text-gray-700 mb-4">Biểu đồ Gọi LLM theo thời gian</h4>
                       <div className="h-64 w-full">
                         <ResponsiveContainer width="100%" height="100%">
@@ -707,7 +901,7 @@ export default function AdminDashboard() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setPreviewDoc(null)} />
           <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between p-4 border-b border-gray-100 bg-gray-50/50">
+            <div className="flex items-center justify-between p-4 border-b border-slate-200 bg-gray-50/50">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-blue-100 text-blue-600 rounded-lg">
                   <FileText size={20} />

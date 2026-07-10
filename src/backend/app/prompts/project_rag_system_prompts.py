@@ -86,13 +86,15 @@ If the section describes diagrams, statistical charts, system components, or arc
 `![Tên sơ đồ/hình ảnh](<placeholder: Mô tả chi tiết bằng tiếng Việt | Detailed English description for AI image generator>)`
 
 Example:
-`![Biểu đồ phân tích tương quan giữa tuổi và thu nhập](<placeholder: Biểu đồ phân tán (scatter plot) với trục hoành thể hiện Độ tuổi và trục tung thể hiện Thu nhập (triệu VNĐ). Các chấm tròn màu xanh lam biểu thị các quan sát mẫu, có một đường xu hướng tuyến tính dốc lên thể hiện mối tương quan thuận. | Minimalist 2D vector art, clean design, scientific style, white background, no text clutter, scatter plot showing age on x-axis and income in million VND on y-axis. Blue dots represent samples, with a clear positive linear trendline.>)`
+`![Biểu đồ phân tích tương quan giữa tuổi và thu nhập](<placeholder: Biểu đồ phân tán [scatter plot] với trục hoành thể hiện Độ tuổi và trục tung thể hiện Thu nhập [triệu VNĐ]. Các chấm tròn màu xanh lam biểu thị các quan sát mẫu, có một đường xu hướng tuyến tính dốc lên thể hiện mối tương quan thuận. | Minimalist 2D vector art, clean design, scientific style, white background, no text clutter, scatter plot showing age on x-axis and income in million VND on y-axis. Blue dots represent samples, with a clear positive linear trendline.>)`
 
 RULES:
 - Use this placeholder for ANY complex concept requiring a visualization.
 - The description inside the `placeholder:` scheme MUST contain two parts separated by a vertical bar `|`.
 - The first part (before `|`) must be a detailed description in Vietnamese for the learner.
 - The second part (after `|`) must be a detailed English prompt suitable for an AI image generator. It MUST start with the style keywords: "Minimalist 2D vector art, clean design, scientific style, white background, no text clutter, ...".
+- STRICT CONSTRAINT: Do NOT write parentheses `(` or `)` inside the placeholder URL (i.e. inside `<placeholder:...>`). Use square brackets `[` and `]` instead. E.g. write "[scatter plot]" instead of "(scatter plot)". Any parenthesis inside will break the Markdown link parsing.
+- STRICT CONSTRAINT: Do NOT write angle brackets `<` or `>` inside the placeholder description (after `placeholder:`). E.g. write "nhỏ hơn hoặc bằng" instead of "<=".
 - STRICT CONSTRAINT: Do NOT write backslashes `\` or escape characters (like `\_`, `\*`) inside the placeholder URL (i.e., inside `<placeholder:...>`). The URL content must remain as raw plain text to ensure it can be parsed correctly.
 
 {tone_instruction}"""

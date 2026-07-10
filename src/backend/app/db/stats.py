@@ -84,3 +84,33 @@ def estimate_tokens_from_text(*parts: str) -> int:
 
 def dumps_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=True)
+
+
+def get_admin_dashboard_stats() -> dict[str, Any]:
+    with _connect() as conn:
+        total_users = conn.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
+        total_projects = conn.execute("SELECT COUNT(*) AS count FROM projects").fetchone()["count"]
+        total_documents = conn.execute("SELECT COUNT(*) AS count FROM documents").fetchone()["count"]
+        total_quizzes = conn.execute("SELECT COALESCE(SUM(num_questions), 0) AS count FROM quiz_attempts").fetchone()["count"]
+        
+        usage_row = conn.execute(
+            "SELECT COALESCE(SUM(llm_calls), 0) AS total_calls, COALESCE(SUM(token_usage), 0) AS total_tokens FROM usage_stats"
+        ).fetchone()
+        
+    total_llm_calls = usage_row["total_calls"]
+    total_tokens = usage_row["total_tokens"]
+    
+    # Calculate estimated cost: Gemini 1.5 Flash input/output cost estimate
+    # Average: ~$0.15 per 1M tokens.
+    # Cost in VND = total_tokens * 0.15 * 25400 / 1M = total_tokens * 0.00381
+    estimated_cost_vnd = round((total_tokens * 0.15 * 25400) / 1000000)
+    
+    return {
+        "total_users": total_users,
+        "total_projects": total_projects,
+        "total_documents": total_documents,
+        "total_quizzes": total_quizzes,
+        "total_llm_calls": total_llm_calls,
+        "total_tokens": total_tokens,
+        "estimated_cost_vnd": estimated_cost_vnd,
+    }

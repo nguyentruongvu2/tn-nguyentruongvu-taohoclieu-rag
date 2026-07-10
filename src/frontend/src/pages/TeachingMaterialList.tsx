@@ -42,7 +42,7 @@ export default function TeachingMaterialList() {
   const [teachingTone, setTeachingTone] = useState("academic");
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState<string[]>([]);
   const [syllabusDocId, setSyllabusDocId] = useState<string | null>(null);
-  const [isTitleFocused, setIsTitleFocused] = useState(false);
+
   const [kbSearch, setKbSearch] = useState("");
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const [isKbListOpen, setIsKbListOpen] = useState(false);
@@ -455,84 +455,14 @@ export default function TeachingMaterialList() {
                 <div className="relative">
                   <label className="block text-sm font-medium text-slate-700 mb-1">
                     Tiêu đề bài giảng
-                    <span className="ml-1 text-xs font-normal text-slate-400">(quan trọng cho độ chính xác AI)</span>
                   </label>
                   <input
                     required
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
-                    onFocus={() => setIsTitleFocused(true)}
-                    onBlur={() => setTimeout(() => setIsTitleFocused(false), 150)}
-                    placeholder="VD: So sánh MySQL và MongoDB cho hệ thống lớn..."
-                    className={`w-full border rounded-lg px-4 py-2 focus:ring-2 outline-none transition-all ${
-                      (() => {
-                        const t = title.trim();
-                        if (!t || t.length < 5) return "focus:ring-blue-400 border-slate-300";
-                        if (t.length < 15 || t.split(" ").length < 3) return "focus:ring-amber-400 border-amber-300";
-                        return "focus:ring-emerald-400 border-emerald-300";
-                      })()
-                    }`}
+                    placeholder=""
+                    className="w-full border border-slate-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                   />
-
-                  {/* Smart Focus Popup */}
-                  {isTitleFocused && (
-                    <div className="absolute left-0 right-0 top-full mt-1.5 z-50 bg-white border border-slate-200 rounded-xl shadow-lg p-3 text-sm">
-                      {/* Dynamic quality indicator */}
-                      {(() => {
-                        const t = title.trim();
-                        const words = t.split(/\s+/).filter(Boolean).length;
-
-                        if (!t) return (
-                          <div>
-                            <p className="text-slate-500 text-xs font-medium mb-2 flex items-center gap-1.5">
-                              <span className="text-lg">💡</span> Tiêu đề là &ldquo;mỏ neo&rdquo; để AI tìm đúng tài liệu
-                            </p>
-                            <div className="space-y-1.5">
-                              <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Công thức hay:</p>
-                              <p className="text-xs text-slate-600 bg-slate-50 rounded-md px-2 py-1">
-                                <span className="text-blue-600 font-medium">[Chủ đề chính]</span> + <span className="text-purple-600 font-medium">[Công nghệ/Góc nhìn]</span>
-                              </p>
-                              <div className="grid grid-cols-1 gap-1 mt-1">
-                                <p className="text-[11px] text-emerald-600">✅ &ldquo;So sánh MySQL và MongoDB cho backend lớn&rdquo;</p>
-                                <p className="text-[11px] text-emerald-600">✅ &ldquo;Tổng quan HQTCSDL: SQL vs NoSQL&rdquo;</p>
-                                <p className="text-[11px] text-red-400">❌ &ldquo;Bài 1&rdquo; hay &ldquo;DBMS&rdquo; (quá chung chung)</p>
-                              </div>
-                            </div>
-                          </div>
-                        );
-
-                        if (t.length < 5 || words < 2) return (
-                          <div className="flex items-start gap-2">
-                            <span className="text-amber-500 text-base mt-0.5">⚠️</span>
-                            <div>
-                              <p className="text-amber-700 font-semibold text-xs">Tiêu đề quá ngắn!</p>
-                              <p className="text-slate-500 text-[11px] mt-0.5">Hãy thêm tên công nghệ hoặc góc nhìn cụ thể. Ví dụ: thay &ldquo;<span className="font-medium">{t}</span>&rdquo; bằng &ldquo;<span className="font-medium text-blue-600">{t} — Phân tích và So sánh</span>&rdquo;.</p>
-                            </div>
-                          </div>
-                        );
-
-                        if (t.length < 15 || words < 4) return (
-                          <div className="flex items-start gap-2">
-                            <span className="text-blue-500 text-base mt-0.5">🔍</span>
-                            <div>
-                              <p className="text-blue-700 font-semibold text-xs">Khá tốt! Bạn có thể cụ thể hơn</p>
-                              <p className="text-slate-500 text-[11px] mt-0.5">Thêm phạm vi hoặc mục tiêu: &ldquo;<span className="font-medium text-blue-600">{t} cho người mới bắt đầu</span>&rdquo; hoặc &ldquo;<span className="font-medium text-blue-600">{t}: Lý thuyết và Thực hành</span>&rdquo;.</p>
-                            </div>
-                          </div>
-                        );
-
-                        return (
-                          <div className="flex items-start gap-2">
-                            <span className="text-emerald-500 text-base mt-0.5">✅</span>
-                            <div>
-                              <p className="text-emerald-700 font-semibold text-xs">Tiêu đề rất tốt!</p>
-                              <p className="text-slate-500 text-[11px] mt-0.5">AI sẽ dùng tiêu đề này làm &ldquo;neo&rdquo; để tìm kiếm nội dung liên quan trong tất cả tài liệu bạn chọn.</p>
-                            </div>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">

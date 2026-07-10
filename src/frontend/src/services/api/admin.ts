@@ -1,9 +1,14 @@
 import { apiClient } from "./client";
-import { AdminUser, AdminDocument, AdminUsageEntry, AdminLogEntry } from "../../types/api";
+import { AdminUser, AdminDocument, AdminUsageEntry, AdminLogEntry, AdminStats } from "../../types/api";
 
 export const adminGetUsers = async (): Promise<AdminUser[]> => {
   const res = await apiClient.get<{ success: boolean; users: AdminUser[] }>("/auth/admin/users");
   return res.data.users ?? [];
+};
+
+export const adminGetStats = async (): Promise<AdminStats> => {
+  const res = await apiClient.get<{ success: boolean; stats: AdminStats }>("/auth/admin/stats");
+  return res.data.stats;
 };
 
 export const adminGetDocuments = async (): Promise<AdminDocument[]> => {

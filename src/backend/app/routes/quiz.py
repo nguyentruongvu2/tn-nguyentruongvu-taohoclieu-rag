@@ -96,8 +96,9 @@ RULES:
 - DISTRACTOR DESIGN (CRITICAL): The 3 incorrect options (distractors) must NOT be obviously wrong. They MUST represent common student misconceptions, partial understandings, or logical errors based on the context.
 - Natural Vietnamese, domain-appropriate technical terms.
 - CHUẨN HÓA THUẬT NGỮ CHUYÊN NGÀNH: Giữ nguyên các thuật ngữ chuyên ngành CNTT và Scrum Guide bằng tiếng Anh như "Scrum Master", "Product Owner", "Sprint", "Increment", "Backlog", "User Story", v.v. Không được dịch gượng ép sang tiếng Việt (tránh dịch máy không tự nhiên). Sử dụng các thuật ngữ quen thuộc trong giáo trình đại học và Scrum Guide.
-- Option Explanations (CRITICAL): You MUST provide a detailed explanation for each of the four choices (A, B, C, D) in Vietnamese in the "explanations" object. Explain why the correct option is correct, and point out the specific logical flaw or error in understanding for each incorrect option. Do not genericize; be specific to each choice.
-- General Explanation: Provide a 1-2 sentence overall explanation in the "explanation" field (usually explaining why the correct answer is right) for backward compatibility.
+- Option Explanations (CRITICAL & CONCISE): You MUST provide a brief, clear explanation for each of the four choices (A, B, C, D) in Vietnamese in the "explanations" object. Keep each explanation extremely concise (maximum 1 sentence per choice). Explain why the correct option is correct, and point out the specific logical flaw or error in understanding for each incorrect option. Do not genericize; be specific to each choice.
+- General Explanation: Provide a brief 1-sentence overall explanation in the "explanation" field (explaining why the correct answer is right) for backward compatibility.
+- CONCISENESS & TIMEOUT PREVENTION: Keep all explanation texts, question bodies, and restudy hints highly concise to prevent output token bloat, ensuring fast generation and preventing 502 Bad Gateway timeouts.
 - Restudy Hint: Identify the specific section or concept name from the lesson that the student should review if they fail this question (e.g., "Mục 2.1: Cách hoạt động của RAM").
 - Topic Field (CRITICAL): Identify the exact heading text (e.g., "2.3.1 Thuật ngữ và Vai trò trong Scrum" or "2.3 Scrum Roles") from the LESSON CONTENT that this question belongs to. Output it in the "topic" field.
 - Chapter Field (CRITICAL): Identify which chapter or major heading (e.g., "Chương 2. Scrum Framework" or "Chương 1. Tổng quan") from the LESSON CONTENT this question belongs to. Output it in the "chapter" field.
@@ -243,24 +244,56 @@ def _heal_malformed_quiz_json(s: str) -> str:
 
 
 def _extract_json(raw: str) -> dict:
-    cleaned = re.sub(r"```(?:json)?", "", raw, flags=re.IGNORECASE).strip().strip("`").strip()
+    text = (raw or "").strip()
+    
+    first_dict = text.find('{')
+    first_list = text.find('[')
+    
+    start_idx = -1
+    end_idx = -1
+    is_list = False
+    
+    if first_dict != -1 and (first_list == -1 or first_dict < first_list):
+        start_idx = first_dict
+        end_idx = text.rfind('}')
+    elif first_list != -1:
+        start_idx = first_list
+        end_idx = text.rfind(']')
+        is_list = True
+        
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        cleaned = text[start_idx:end_idx+1]
+    else:
+        cleaned = re.sub(r"```(?:json)?", "", text, flags=re.IGNORECASE).strip().strip("`").strip()
+        if cleaned.startswith("[") and cleaned.endswith("]"):
+            is_list = True
+        
     cleaned = _heal_malformed_quiz_json(cleaned)
     try:
-        return json.loads(cleaned)
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, list):
+            return {"questions": parsed}
+        return parsed
     except json.JSONDecodeError:
         pass
     
     # Try self-healing JSON repair
     try:
         repaired = _repair_json(cleaned)
-        return json.loads(repaired)
+        parsed = json.loads(repaired)
+        if isinstance(parsed, list):
+            return {"questions": parsed}
+        return parsed
     except Exception:
         pass
         
-    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    match = re.search(r"\[.*\]", cleaned, re.DOTALL) if is_list else re.search(r"\{.*\}", cleaned, re.DOTALL)
     if match:
         try:
-            return json.loads(match.group())
+            parsed = json.loads(match.group())
+            if isinstance(parsed, list):
+                return {"questions": parsed}
+            return parsed
         except json.JSONDecodeError:
             pass
     logger.error("Failed to parse JSON. Raw LLM response was:\n%s", raw)
@@ -271,14 +304,54 @@ _VALID_TYPES = {"knowledge", "comprehension", "application", "analysis"}
 
 
 def _validate(raw: dict) -> bool:
-    return (
-        isinstance(raw.get("question"), str) and raw["question"].strip()
-        and isinstance(raw.get("options"), list) and len(raw["options"]) == 4
-        and all(isinstance(o, str) and o.strip() for o in raw["options"])
-        and isinstance(raw.get("correct_answer"), str)
-        and raw["correct_answer"].upper() in {"A", "B", "C", "D"}
-        and isinstance(raw.get("explanation"), str) and raw["explanation"].strip()
-    )
+    if not isinstance(raw, dict):
+        return False
+    
+    # 1. Clean question
+    if "question" not in raw or not isinstance(raw["question"], str) or not raw["question"].strip():
+        return False
+        
+    # 2. Clean options
+    options = raw.get("options")
+    if not isinstance(options, list) or len(options) != 4:
+        return False
+    cleaned_options = []
+    for o in options:
+        cleaned_options.append(str(o).strip())
+    if not all(cleaned_options):
+        return False
+    raw["options"] = cleaned_options
+    
+    # 3. Clean correct_answer
+    ans = raw.get("correct_answer")
+    if not isinstance(ans, str):
+        if isinstance(ans, int) and 0 <= ans <= 3:
+            ans = ["A", "B", "C", "D"][ans]
+        else:
+            return False
+    ans_clean = str(ans).strip().upper()
+    if len(ans_clean) > 0 and ans_clean[0] in {"A", "B", "C", "D"}:
+        raw["correct_answer"] = ans_clean[0]
+    else:
+        # Check if correct_answer matches one of the option texts
+        matched_letter = None
+        for i, opt in enumerate(cleaned_options):
+            opt_body = re.sub(r'^[A-D]\s*[\.\:\-\)]\s*', '', opt).strip().lower()
+            ans_clean_body = re.sub(r'^[A-D]\s*[\.\:\-\)]\s*', '', ans_clean).strip().lower()
+            if opt_body == ans_clean_body or opt.lower() == ans_clean.lower():
+                matched_letter = ["A", "B", "C", "D"][i]
+                break
+        if matched_letter:
+            raw["correct_answer"] = matched_letter
+        else:
+            return False
+            
+    # 4. Clean explanation
+    exp = raw.get("explanation")
+    if not isinstance(exp, str) or not exp.strip():
+        raw["explanation"] = "Xem giải thích chi tiết trong phần đáp án."
+        
+    return True
 
 
 def _call_llm_sync(prompt: str, n: int) -> str:
@@ -529,6 +602,38 @@ def determine_chapter_topic(matched_key: str, tree: dict) -> tuple[str, str]:
 @router.post("/generate-quiz", response_model=GenerateQuizResponse)
 async def generate_quiz(body: GenerateQuizRequest):
     """Generate diverse academic MCQ quiz using Gemini (non-blocking)."""
+    content_clean = body.lesson_content.strip()
+    
+    # 1. Check if lesson content is empty
+    if not content_clean:
+        raise HTTPException(
+            status_code=400,
+            detail="Nội dung bài giảng của mục này đang trống. Vui lòng quay lại Soạn thảo bài giảng để tạo nội dung trước khi tạo quiz!"
+        )
+        
+    # 2. Check if content is default placeholder text
+    placeholder_texts = [
+        "chay ai tao hoac nhap noi dung markdown thu cong",
+        "chạy ai tạo hoặc nhập nội dung markdown thủ công",
+        "ban xem truoc trong. su dung ai tao noi dung",
+        "bản xem trước trống. sử dụng ai tạo nội dung",
+        "ban xem truoc trong",
+        "bản xem trước trống"
+    ]
+    norm_content = _normalize_heading_key(content_clean)
+    is_placeholder = any(p in norm_content for p in placeholder_texts)
+    
+    # 3. Check if there is actual body text (excluding heading lines)
+    lines = [l.strip() for l in content_clean.splitlines() if l.strip()]
+    body_lines = [l for l in lines if not l.startswith("#")]
+    body_text = "\n".join(body_lines).strip()
+    
+    if is_placeholder or not body_text or len(body_text) < 15:
+        raise HTTPException(
+            status_code=400,
+            detail="Mục này chưa được soạn thảo nội dung lý thuyết chi tiết. Vui lòng tạo nội dung bài giảng trước khi tạo quiz!"
+        )
+
     seed = body.variation_seed if body.variation_seed is not None else int(time.time()) % 10000
     
     logger.info("[QUIZ_MAPPING] lesson_content length=%d, first 500 chars: %r", len(body.lesson_content), body.lesson_content[:500])
