@@ -14,14 +14,22 @@ Hệ thống hỗ trợ giảng viên xây dựng bài giảng và ngân hàng c
 
 ## ✨ Tính Năng Nổi Bật (Key Features)
 
-Hệ thống được phát triển với nhiều tính năng nâng cao, đáp ứng các tiêu chuẩn trải nghiệm người dùng hiện đại và quy chuẩn sư phạm thực tế:
+Hệ thống cung cấp bộ giải pháp toàn diện hỗ trợ giảng viên biên soạn bài giảng và ngân hàng câu hỏi, chia thành các nhóm chức năng cốt lõi và các tính năng nâng cấp trải nghiệm người dùng:
 
-*   **Tổng hợp dàn ý hướng Sư phạm (Pedagogy-First Outline Synthesis)**: AI tự động phân tích và đối chiếu chéo cấu trúc Đề cương, mục tiêu học phần và Chuẩn đầu ra (CLOs) của trường để đề xuất hệ thống bài giảng Level 2, Level 3 chuẩn chỉnh thay vì chỉ dựa vào mục lục giáo trình chung chung.
-*   **Chế độ Sửa & Đọc linh hoạt (Edit / Reader View Mode)**: Cho phép chuyển đổi nhanh chóng giữa chế độ split-screen (vừa viết Markdown vừa xem Preview) và chế độ đọc toàn màn hình (Reader mode) để tập trung rà soát bài giảng.
-*   **Giao diện Nền tối toàn hệ thống (Dark/Light mode)**: Tích hợp nút chuyển đổi giao diện sáng/tối đồng bộ toàn bộ hệ thống, ứng dụng `dark:prose-invert` hiển thị nội dung bài học sắc nét, giảm mỏi mắt cho giảng viên khi làm việc ban đêm.
-*   **Bảo toàn trạng thái hội thoại nháp (Chat Draft State Preservation)**: Hộp thoại hỏi đáp RAG tự động ghi nhớ và giữ nguyên văn bản nháp của giảng viên kể cả khi họ chuyển tab hoặc thao tác các tính năng khác.
-*   **Tự động sửa lỗi ảnh AI (Self-healing AI image placeholders)**: Phát hiện và sửa đổi thông minh các lỗi cú pháp thẻ ảnh do mô hình LLM viết sai định dạng, đảm bảo ảnh bản vẽ thiết kế hiển thị chuẩn xác ở cả màn hình web và khi kết xuất PDF/Word.
-*   **Cảnh báo an toàn & Sư phạm khi tạo Quiz**: Hệ thống hiển thị cảnh báo trực quan ngăn chặn việc tạo câu hỏi trắc nghiệm trên các mục bài giảng chưa được soạn thảo nội dung lý thuyết, đồng thời hỗ trợ bắt lỗi API thân thiện.
+### 🌟 Nhóm Chức năng Nghiệp vụ Cốt lõi
+*   **Biên soạn Bài giảng Thông minh (AI-Powered Lecture Generation)**: Ứng dụng công nghệ RAG tiên tiến, tự động truy xuất kiến thức từ sách giáo trình tham khảo và tài liệu nguồn để hỗ trợ giảng viên viết chi tiết nội dung lý thuyết cho từng mục bài học theo thời gian thực.
+*   **Sinh Ngân hàng Câu hỏi Trắc nghiệm (Quiz Generation)**: Tự động trích xuất kiến thức cốt lõi của bài học và gọi LLM để sinh câu hỏi trắc nghiệm khách quan (gồm đề bài, 4 phương án lựa chọn, đáp án đúng và lời giải thích ngắn) phân loại theo thang nhận thức Bloom (Nhận biết, Thông hiểu, Vận dụng).
+*   **Kết xuất & Xuất bản Đa định dạng (Multi-Format Exporting)**: Cho phép tải bài giảng dưới dạng tài liệu Word (DOCX) hoặc PDF chuẩn hóa bố cục; xuất ngân hàng câu hỏi trắc nghiệm dưới dạng CSV hoặc **Moodle XML** để import trực tiếp vào các hệ thống LMS (Moodle, Canvas).
+*   **Trợ lý Gợi ý Prompt chuyên biệt (Prompt Suggestions)**: Tích hợp hệ thống mẫu Prompt chuyên môn sư phạm (nhấp biểu tượng 🌟 Sparkles) để tự động điền các yêu cầu tối ưu cho AI theo 3 chế độ: *Soạn lý thuyết*, *Tạo ví dụ thực tế*, hoặc *Sinh câu hỏi thảo luận*.
+*   **Tự động vẽ & Chèn sơ đồ minh họa (AI Image Generation)**: Cho phép chèn các sơ đồ 2D dạng vector mô tả cấu trúc hệ thống vào nội dung bài giảng thông qua cú pháp prompt ảnh. Hệ thống tích hợp bộ lọc **tự vá lỗi ảnh (Self-healing)** đảm bảo sơ đồ dựng lên sắc nét và chuẩn xác.
+
+### ⚙️ Nhóm Tính năng Nâng cấp Trải nghiệm (UX/UI)
+*   **Tổng hợp dàn ý hướng Sư phạm (Pedagogy-First Outline Synthesis)**: AI tự động phân tích toàn diện Đề cương môn học của trường (bao gồm Chuẩn đầu ra CLOs, Mục tiêu môn học, Lịch trình học) để tự động phân rã cấu trúc bài giảng Level 2, Level 3 bám sát lộ trình đào tạo của nhà trường trước khi tham chiếu giáo trình.
+*   **Trình chỉnh sửa mục lục trực tiếp (Inline Outline Edit)**: Cho phép giảng viên bấm trực tiếp vào bất kỳ tiêu đề chương/mục con nào ngay tại màn hình phê duyệt mục lục để sửa tên nhanh, kéo thả sắp xếp lại thứ tự bài học trực quan.
+*   **Chế độ Sửa & Đọc linh hoạt (Edit / Reader View Mode)**: Chuyển đổi linh hoạt giữa giao diện soạn thảo split-screen (vừa code Markdown vừa xem Preview) và chế độ đọc 100% toàn màn hình giúp giảng viên tập trung cao độ khi rà soát văn bản.
+*   **Giao diện Nền tối toàn hệ thống (Dark/Light mode)**: Tích hợp nút chuyển đổi giao diện tối (Dark mode) đồng bộ toàn bộ trang web và trình soạn thảo (hỗ trợ `dark:prose-invert`), giúp giảm mỏi mắt cho giảng viên khi biên tập tài liệu về đêm.
+*   **Bảo toàn trạng thái nháp (Chat Draft State Preservation)**: Hộp hội thoại chatbot RAG tự động lưu trữ tin nhắn nháp chưa gửi của giảng viên khi họ chuyển tab hoặc thực hiện các tác vụ khác mà không bị xóa mất dữ liệu.
+*   **Cảnh báo an toàn sư phạm khi tạo Quiz**: Hệ thống hiển thị cảnh báo trực quan màu vàng ngăn chặn việc sinh câu hỏi trắc nghiệm từ các đề mục rỗng (chưa soạn nội dung lý thuyết), hướng dẫn giảng viên tạo bài giảng trước để đảm bảo tính chính xác của câu hỏi.
 
 ---
 
