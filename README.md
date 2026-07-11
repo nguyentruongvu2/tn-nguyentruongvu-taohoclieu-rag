@@ -92,7 +92,14 @@ AI_RAG_Project/
 
 Việc chạy hệ thống cực kỳ đơn giản nhờ Docker Compose. Vui lòng làm theo các bước dưới đây:
 
-### Bước 1: Cấu hình biến môi trường
+### Bước 1: Tải mã nguồn về máy (Clone Repository)
+Mở cửa sổ Command Prompt / Terminal và chạy lệnh sau để tải toàn bộ mã nguồn của dự án:
+```bash
+git clone https://github.com/nguyentruongvu2/RAG_Teaching_Material.git
+cd RAG_Teaching_Material
+```
+
+### Bước 2: Cấu hình biến môi trường
 1.  Di chuyển vào thư mục `src/`:
     ```bash
     cd src
@@ -109,7 +116,7 @@ Việc chạy hệ thống cực kỳ đơn giản nhờ Docker Compose. Vui lò
     COHERE_API_KEY=your_cohere_api_key_here
     ```
 
-### Bước 2: Khởi chạy các dịch vụ hệ thống
+### Bước 3: Khởi chạy các dịch vụ hệ thống
 Tại thư mục `src/` (nơi chứa file `docker-compose.yml`), chạy lệnh sau để build và khởi động hệ thống:
 
 ```bash
@@ -118,19 +125,19 @@ docker compose up --build -d
 
 Lệnh này sẽ tự động tải các Docker image cần thiết, thiết lập cơ sở dữ liệu PostgreSQL, cơ sở dữ liệu vector Qdrant, dịch vụ Backend, Frontend và liên kết chúng lại với nhau thông qua mạng ảo nội bộ.
 
-### Bước 3: Kiểm tra trạng thái hoạt động
+### Bước 4: Kiểm tra trạng thái hoạt động
 Đợi khoảng 30 giây đến 1 phút để các container khởi tạo xong. Bạn có thể kiểm tra trạng thái bằng lệnh:
 ```bash
 docker compose ps
 ```
 Nếu tất cả các container hiển thị trạng thái `running` hoặc `healthy`, hệ thống đã sẵn sàng hoạt động.
 
-### Bước 4: Truy cập ứng dụng
+### Bước 5: Truy cập ứng dụng
 *   **Giao diện ứng dụng (Frontend)**: Truy cập qua trình duyệt tại địa chỉ [http://localhost:3000](http://localhost:3000)
 *   **Tài liệu API (Swagger UI)**: Truy cập tại địa chỉ [http://localhost:8000/docs](http://localhost:8000/docs)
 *   **Cơ sở dữ liệu Vector Qdrant Console**: Truy cập tại địa chỉ [http://localhost:6333/dashboard](http://localhost:6333/dashboard)
 
-### Bước 5: Dừng hệ thống
+### Bước 6: Dừng hệ thống
 Để tắt tất cả các container mà không làm mất dữ liệu của cơ sở dữ liệu, chạy lệnh:
 ```bash
 docker compose down
