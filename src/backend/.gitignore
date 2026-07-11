@@ -23,6 +23,7 @@ python_env/
 
 # Test output and logs
 *.txt
+!requirements*.txt
 *.log
 backend_logs.txt
 

@@ -1,0 +1,7 @@
+-r requirements.base.txt
+
+# Optional full OCR stack for non-Windows platforms (Docker/Linux).
+# On Windows, install base only by default to avoid long-path failures.
+# paddleocr==2.10.0; platform_system != "Windows"
+# paddlepaddle>=2.6.1; platform_system != "Windows"
+

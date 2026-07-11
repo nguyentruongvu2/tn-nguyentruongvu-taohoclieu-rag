@@ -1,0 +1,6 @@
+-r requirements.base.txt
+
+# Full OCR stack for Windows
+# Requires Long Paths enabled (see README_WINDOWS_SETUP.md)
+paddleocr==2.10.0
+paddlepaddle==3.3.0
