@@ -1372,38 +1372,93 @@ export default function TeachingMaterialEditor() {
 
   const handleNestSection = async (sourceId: string, targetId: string) => {
     await flushPendingSavesAndWait();
-    const list = [...sections];
-    const sourceIndex = list.findIndex((item) => item.id === sourceId);
-    const targetIndex = list.findIndex((item) => item.id === targetId);
+    const sorted = sections.slice().sort((a, b) => a.order - b.order);
+    const sourceIndex = sorted.findIndex((item) => item.id === sourceId);
+    const targetIndex = sorted.findIndex((item) => item.id === targetId);
     if (sourceIndex < 0 || targetIndex < 0) return;
 
-    const source = list[sourceIndex];
-    const target = list[targetIndex];
+    const source = sorted[sourceIndex];
+    const target = sorted[targetIndex];
+
+    // Prevent nesting a parent under itself or its descendants
+    if (sourceId === targetId) return;
+    const sourceDescendants = getChildrenSections(source, sorted);
+    if (sourceDescendants.some((d) => d.id === targetId)) {
+      toastService.error("Không thể lồng mục cha vào trong mục con của chính nó!");
+      return;
+    }
 
     const nextLevel = target.level + 1;
-    const nextTitle = generateNewChildTitle(target, source, list);
+    const nextTitleText = generateNewChildTitle(target, source, sorted);
+    const levelDelta = nextLevel - source.level;
 
-    source.level = nextLevel;
-    source.title = nextTitle;
+    // Shallow copy and update level for the moved subtree to trigger React state updates cleanly
+    const movedGroup = [source, ...sourceDescendants].map((item) => ({
+      ...item,
+      level: Math.max(1, item.level + levelDelta),
+    }));
+    
+    // Update the title text of the nested parent item
+    movedGroup[0].title = nextTitleText;
 
-    const children = getChildrenSections(target, list);
-    list.splice(sourceIndex, 1);
-    const adjustedInsertIndex = list.findIndex((item) => item.id === (children.length > 0 ? children[children.length - 1].id : target.id));
-    list.splice(adjustedInsertIndex + 1, 0, source);
+    // Filter out the old items of the moved subtree
+    const reordered = sorted.filter((item) => !movedGroup.some((m) => m.id === item.id));
 
-    const nextSections = list.map((item, index) => ({
+    const targetInReordered = reordered.find((item) => item.id === targetId);
+    if (!targetInReordered) return;
+
+    const targetChildren = getChildrenSections(targetInReordered, reordered);
+    let insertIndex = reordered.findIndex((item) => item.id === (targetChildren.length > 0 ? targetChildren[targetChildren.length - 1].id : targetId));
+    
+    reordered.splice(insertIndex + 1, 0, ...movedGroup);
+
+    // Re-index order
+    const nextSectionsWithRawOrders = reordered.map((item, index) => ({
       ...item,
       order: index,
     }));
 
-    setSections(nextSections);
-    toastService.success(`Đã lồng mục "${source.title}" làm con của "${target.title}"`);
+    // Recalculate prefixes for the final list to rewrite title texts
+    const prefixes: Record<string, string> = {};
+    const counts: number[] = [];
+    for (const s of nextSectionsWithRawOrders) {
+      const lv = s.level || 1;
+      counts.length = lv;
+      counts[lv - 1] = (counts[lv - 1] || 0) + 1;
+      if (lv === 1) {
+        prefixes[s.id] = `Chương ${counts[0]}.`;
+      } else {
+        prefixes[s.id] = counts.slice(0, lv).join(".");
+      }
+    }
+
+    const finalSections = nextSectionsWithRawOrders.map((s) => {
+      const cleanText = getCleanTitle(s.title);
+      const prefix = prefixes[s.id] || "";
+      let formattedPrefix = prefix;
+      if (prefix && !prefix.startsWith("Chương") && !prefix.startsWith("Chuong")) {
+        formattedPrefix = prefix.endsWith(".") ? prefix : `${prefix}.`;
+      }
+      const newTitle = formattedPrefix ? `${formattedPrefix} ${cleanText}` : cleanText;
+      return {
+        ...s,
+        title: newTitle,
+      };
+    });
+
+    setSections(finalSections);
+    toastService.success(`Đã lồng mục "${getCleanTitle(source.title)}" làm con của "${getCleanTitle(target.title)}"`);
 
     if (projectId) {
       setSaveStatus("saving");
       try {
-        updateSection(source.id, { title: nextTitle, level: nextLevel });
-        await reorderEditorSections(projectId, nextSections.map((s) => s.id));
+        // Save the updated levels and titles of all items in the subtree to the server
+        const savePromises = finalSections
+          .filter((s) => movedGroup.some((m) => m.id === s.id))
+          .map((s) => updateSection(s.id, { title: s.title, level: s.level }));
+        
+        await Promise.all(savePromises);
+        await reorderEditorSections(projectId, finalSections.map((s) => s.id));
         setSaveStatus("saved");
         window.setTimeout(() => setSaveStatus("idle"), 1200);
       } catch (err) {
@@ -1421,30 +1476,89 @@ export default function TeachingMaterialEditor() {
       const targetIndex = sorted.findIndex((item) => item.id === targetId);
       if (sourceIndex < 0 || targetIndex < 0) return;
 
-      const reordered = [...sorted];
-      const [moved] = reordered.splice(sourceIndex, 1);
-      
+      const source = sorted[sourceIndex];
+      const target = sorted[targetIndex];
+
+      // Prevent moving parent under its own descendants
+      const descendants = getChildrenSections(source, sorted);
+      if (descendants.some((d) => d.id === targetId)) {
+        toastService.error("Không thể di chuyển mục cha vào trong mục con của chính nó!");
+        return;
+      }
+
+      const levelDelta = target.level - source.level;
+
+      // Shallow copy and update level for the moved group to trigger React state updates cleanly
+      const movedGroup = [source, ...descendants].map((item) => ({
+        ...item,
+        level: Math.max(1, item.level + levelDelta),
+      }));
+
+      // Filter out moved group from the list
+      const reordered = sorted.filter((item) => !movedGroup.some((m) => m.id === item.id));
+
       let insertIndex = reordered.findIndex((item) => item.id === targetId);
+      if (insertIndex < 0) return;
+
       if (mode === "reorder-after") {
+        // If reordering after, we insert after the target and all its remaining children in the list
+        const targetItem = reordered[insertIndex];
+        const targetChildren = getChildrenSections(targetItem, reordered);
+        if (targetChildren.length > 0) {
+          const lastChild = targetChildren[targetChildren.length - 1];
+          insertIndex = reordered.findIndex((item) => item.id === lastChild.id);
+        }
         insertIndex += 1;
       }
-      
-      reordered.splice(insertIndex, 0, moved);
 
-      const targetItem = sorted[targetIndex];
-      moved.level = targetItem.level;
+      reordered.splice(insertIndex, 0, ...movedGroup);
 
-      const nextSections = reordered.map((item, index) => ({
+      // Re-index order
+      const nextSectionsWithRawOrders = reordered.map((item, index) => ({
         ...item,
         order: index,
       }));
 
-      setSections(nextSections);
+      // Recalculate prefixes for the final list to rewrite title texts
+      const prefixes: Record<string, string> = {};
+      const counts: number[] = [];
+      for (const s of nextSectionsWithRawOrders) {
+        const lv = s.level || 1;
+        counts.length = lv;
+        counts[lv - 1] = (counts[lv - 1] || 0) + 1;
+        if (lv === 1) {
+          prefixes[s.id] = `Chương ${counts[0]}.`;
+        } else {
+          prefixes[s.id] = counts.slice(0, lv).join(".");
+        }
+      }
+
+      const finalSections = nextSectionsWithRawOrders.map((s) => {
+        const cleanText = getCleanTitle(s.title);
+        const prefix = prefixes[s.id] || "";
+        let formattedPrefix = prefix;
+        if (prefix && !prefix.startsWith("Chương") && !prefix.startsWith("Chuong")) {
+          formattedPrefix = prefix.endsWith(".") ? prefix : `${prefix}.`;
+        }
+        const newTitle = formattedPrefix ? `${formattedPrefix} ${cleanText}` : cleanText;
+        return {
+          ...s,
+          title: newTitle,
+        };
+      });
+
+      setSections(finalSections);
       toastService.success("Đã thay đổi thứ tự mục bài giảng");
 
       if (projectId) {
         setSaveStatus("saving");
-        reorderEditorSections(projectId, nextSections.map((s) => s.id))
+        // Save the updated levels and titles of all items in the moved group to the server
+        const savePromises = finalSections
+          .filter((s) => movedGroup.some((m) => m.id === s.id))
+          .map((s) => updateSection(s.id, { title: s.title, level: s.level }));
+        
+        Promise.all(savePromises)
+          .then(() => reorderEditorSections(projectId, finalSections.map((s) => s.id)))
           .then(() => {
             setSaveStatus("saved");
             window.setTimeout(() => setSaveStatus("idle"), 1200);
