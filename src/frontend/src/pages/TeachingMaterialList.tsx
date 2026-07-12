@@ -439,7 +439,7 @@ export default function TeachingMaterialList() {
 
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
             <div className="p-6 border-b">
               <h2 className="text-xl font-bold text-slate-800">
                 {isEditMode
@@ -466,13 +466,18 @@ export default function TeachingMaterialList() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Mô tả ngắn
+                    Mô tả bài giảng
                   </label>
                   <textarea
                     value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    rows={3}
-                    className="w-full border rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
+                    onChange={(e) => {
+                      setDescription(e.target.value);
+                      e.target.style.height = "auto";
+                      e.target.style.height = `${e.target.scrollHeight}px`;
+                    }}
+                    rows={1}
+                    style={{ minHeight: "38px", height: "auto", resize: "none" }}
+                    className="w-full border rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all duration-150"
                   />
                 </div>
                 <div>
@@ -557,14 +562,18 @@ export default function TeachingMaterialList() {
 
                 {/* Knowledge Base Selection */}
                 <div ref={kbSelectorRef}>
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center justify-between mb-1">
                     <label className="block text-sm font-bold text-slate-700">
-                      Chọn Knowledge Base
+                      Chọn Tài liệu nguồn (để AI tham chiếu)
                     </label>
-                    <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
+                    <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 whitespace-nowrap">
                       Đã chọn {knowledgeBaseIds.length} tài liệu
                     </span>
                   </div>
+                  
+                  <p className="text-[11px] text-slate-400 mb-2.5 leading-normal">
+                    Hệ thống AI sẽ chỉ truy xuất và biên soạn nội dung bài giảng dựa trên các tài liệu được chọn tại đây.
+                  </p>
                   
                   {/* Search box for documents */}
                   <div className="relative mb-2">
@@ -573,7 +582,7 @@ export default function TeachingMaterialList() {
                     </span>
                     <input
                       type="text"
-                      placeholder="Nhấp vào đây để tìm và chọn tài liệu..."
+                      placeholder="Nhấp vào đây để tìm và chọn tài liệu nguồn..."
                       value={kbSearch}
                       onChange={(e) => setKbSearch(e.target.value)}
                       onFocus={() => setIsKbListOpen(true)}

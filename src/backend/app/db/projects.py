@@ -193,7 +193,7 @@ def _normalize_editor_section_record(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def create_editor_section(
-    project_id: str, title: str, prompt: str, order_index: int | None = None
+    project_id: str, title: str, prompt: str, order_index: int | None = None, level: int = 1
 ) -> dict[str, Any]:
     now        = _utc_now()
     section_id = str(uuid.uuid4())
@@ -211,8 +211,8 @@ def create_editor_section(
                 (now, project_id, safe_order),
             )
         conn.execute(
-            "INSERT INTO project_editor_sections(id, project_id, title, content_markdown, prompt, retrieved_chunks_json, evaluation_json, order_index, updated_at) VALUES (%s, %s, %s, '', %s, '[]', NULL, %s, %s)",
-            (section_id, project_id, title.strip(), (prompt or "").strip(), safe_order, now),
+            "INSERT INTO project_editor_sections(id, project_id, title, content_markdown, prompt, retrieved_chunks_json, evaluation_json, level, order_index, updated_at) VALUES (%s, %s, %s, '', %s, '[]', NULL, %s, %s, %s)",
+            (section_id, project_id, title.strip(), (prompt or "").strip(), level, safe_order, now),
         )
         conn.execute(
             "UPDATE projects SET updated_at = %s WHERE id = %s", (now, project_id)
@@ -249,6 +249,7 @@ def replace_editor_sections(project_id: str, sections: list[dict[str, Any]]) -> 
         {
             "title":       str(i.get("title") or "").strip(),
             "prompt":      str(i.get("prompt") or "").strip(),
+            "level":       int(i.get("level") or 1),
             "order_index": int(i.get("order_index") or 0),
         }
         for i in sections
@@ -260,9 +261,9 @@ def replace_editor_sections(project_id: str, sections: list[dict[str, Any]]) -> 
         )
         for idx, item in enumerate(normalized):
             conn.execute(
-                "INSERT INTO project_editor_sections(id, project_id, title, content_markdown, prompt, retrieved_chunks_json, evaluation_json, order_index, updated_at) VALUES (%s, %s, %s, '', %s, '[]', NULL, %s, %s)",
+                "INSERT INTO project_editor_sections(id, project_id, title, content_markdown, prompt, retrieved_chunks_json, evaluation_json, level, order_index, updated_at) VALUES (%s, %s, %s, '', %s, '[]', NULL, %s, %s, %s)",
                 (str(uuid.uuid4()), project_id, item["title"], item["prompt"],
-                 int(item.get("order_index", idx)), now),
+                 item["level"], int(item.get("order_index") or idx), now),
             )
         conn.execute("UPDATE projects SET updated_at = %s WHERE id = %s", (now, project_id))
         conn.commit()
@@ -272,7 +273,7 @@ def replace_editor_sections(project_id: str, sections: list[dict[str, Any]]) -> 
 def list_editor_sections(project_id: str) -> list[dict[str, Any]]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, project_id, title, content_markdown, prompt, retrieved_chunks_json, evaluation_json, order_index, updated_at FROM project_editor_sections WHERE project_id = %s ORDER BY order_index ASC, updated_at DESC",
+            "SELECT id, project_id, title, content_markdown, prompt, retrieved_chunks_json, evaluation_json, level, order_index, updated_at FROM project_editor_sections WHERE project_id = %s ORDER BY order_index ASC, updated_at DESC",
             (project_id,),
         ).fetchall()
     return [_normalize_editor_section_record(row) for row in rows]
@@ -281,7 +282,7 @@ def list_editor_sections(project_id: str) -> list[dict[str, Any]]:
 def get_editor_section_by_id(section_id: str) -> dict[str, Any] | None:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT id, project_id, title, content_markdown, prompt, retrieved_chunks_json, evaluation_json, order_index, updated_at FROM project_editor_sections WHERE id = %s",
+            "SELECT id, project_id, title, content_markdown, prompt, retrieved_chunks_json, evaluation_json, level, order_index, updated_at FROM project_editor_sections WHERE id = %s",
             (section_id,),
         ).fetchone()
     return _normalize_editor_section_record(row) if row else None
@@ -290,7 +291,7 @@ def get_editor_section_by_id(section_id: str) -> dict[str, Any] | None:
 def get_editor_section_for_user(section_id: str, user_id: int, role: str) -> dict[str, Any] | None:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT s.id, s.project_id, s.title, s.content_markdown, s.prompt, s.retrieved_chunks_json, s.evaluation_json, s.order_index, s.updated_at FROM project_editor_sections s JOIN projects p ON p.id = s.project_id WHERE s.id = %s AND p.user_id = %s",
+            "SELECT s.id, s.project_id, s.title, s.content_markdown, s.prompt, s.retrieved_chunks_json, s.evaluation_json, s.level, s.order_index, s.updated_at FROM project_editor_sections s JOIN projects p ON p.id = s.project_id WHERE s.id = %s AND p.user_id = %s",
             (section_id, int(user_id)),
         ).fetchone()
     return _normalize_editor_section_record(row) if row else None
@@ -301,6 +302,7 @@ def update_editor_section(
     title: str | None = None, content_markdown: str | None = None,
     prompt: str | None = None, retrieved_chunks: list[dict[str, Any]] | None = None,
     evaluation: dict[str, Any] | None = None, order_index: int | None = None,
+    level: int | None = None,
 ) -> dict[str, Any] | None:
     current = get_editor_section_for_user(section_id, user_id, role)
     if not current:
@@ -312,14 +314,15 @@ def update_editor_section(
     next_chunks  = retrieved_chunks if retrieved_chunks is not None else list(current.get("retrieved_chunks") or [])
     next_eval    = evaluation if evaluation is not None else current.get("evaluation")
     next_order   = int(order_index) if order_index is not None else int(current.get("order_index") or 0)
+    next_level   = int(level) if level is not None else int(current.get("level") or 1)
     with _connect() as conn:
         conn.execute(
-            "UPDATE project_editor_sections SET title=%s,content_markdown=%s,prompt=%s,retrieved_chunks_json=%s,evaluation_json=%s,order_index=%s,updated_at=%s WHERE id=%s",
+            "UPDATE project_editor_sections SET title=%s,content_markdown=%s,prompt=%s,retrieved_chunks_json=%s,evaluation_json=%s,level=%s,order_index=%s,updated_at=%s WHERE id=%s",
             (
                 next_title, next_content, next_prompt,
                 json.dumps(next_chunks, ensure_ascii=True),
                 json.dumps(next_eval, ensure_ascii=True) if next_eval is not None else None,
-                next_order, now, section_id,
+                next_level, next_order, now, section_id,
             ),
         )
         conn.execute(

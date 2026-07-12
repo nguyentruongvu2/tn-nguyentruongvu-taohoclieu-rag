@@ -960,7 +960,7 @@ export default function QuizPage() {
       {/* Regen Modal */}
       {showRegenModal && (
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", width: "100%", maxWidth: "480px", boxShadow: "0 20px 40px rgba(0,0,0,0.2)" }}>
+          <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", width: "100%", maxWidth: "640px", boxShadow: "0 20px 40px rgba(0,0,0,0.2)" }}>
             <h2 style={{ margin: "0 0 16px 0", fontSize: 20 }}>{items.length === 0 ? "Cấu hình Quiz" : "Tạo Quiz mới"}</h2>
             <div style={{ marginBottom: 16 }}>
               <label style={{ display: "block", marginBottom: 8, fontSize: 14, fontWeight: 600 }}>Nhập yêu cầu tạo câu hỏi (Prompt)</label>
@@ -970,10 +970,10 @@ export default function QuizPage() {
                 onChange={e => {
                   setRegenCustom(e.target.value);
                   e.target.style.height = "auto";
-                  e.target.style.height = `${e.target.scrollHeight}px`;
+                  e.target.style.height = `${Math.max(120, e.target.scrollHeight)}px`;
                 }}
                 placeholder="Nhập yêu cầu chi tiết để tạo câu hỏi hiệu quả"
-                style={{ width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #cbd5e1", minHeight: "42px", height: "auto", resize: "none", fontSize: 13, lineHeight: "1.5" }}
+                style={{ width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #cbd5e1", minHeight: "120px", height: "auto", resize: "vertical", fontSize: 13, lineHeight: "1.5" }}
               />
             </div>
             <div style={{ fontSize: "12px", color: "#475569", background: "#f8fafc", padding: "12px", borderRadius: "8px", marginBottom: 20, border: "1px solid #e2e8f0", lineHeight: "1.6" }}>

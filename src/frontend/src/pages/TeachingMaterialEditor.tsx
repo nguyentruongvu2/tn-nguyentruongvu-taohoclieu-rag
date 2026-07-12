@@ -117,6 +117,34 @@ function normalizePromptKey(text: string): string {
     .trim();
 }
 
+function cleanSuggestedPrompt(prompt: string): string {
+  if (!prompt) return "";
+  let clean = prompt;
+  
+  // 1. Fix ![placeholder: Vietnamese | English] where there is no following (
+  clean = clean.replace(/!\[placeholder:\s*([^\]]+)\](?!\()/g, (_, content) => {
+    let vi = content.trim();
+    let en = "";
+    if (vi.includes("|")) {
+      const parts = vi.split("|");
+      vi = (parts[0] || "").trim();
+      en = (parts[1] || "").trim();
+    } else {
+      en = `Minimalist 2D vector art, clean design, scientific style, white background, no text clutter, ${vi}`;
+    }
+    vi = vi.replace(/[<>]/g, "").trim();
+    en = en.replace(/[<>]/g, "").trim();
+    return `![Sơ đồ minh họa](<placeholder: ${vi} | ${en}>)`;
+  });
+
+  // 2. Fix ![Alt](placeholder: ...) -> ![Alt](<placeholder: ...>) if angle brackets are missing
+  clean = clean.replace(/!\[([^\]]*)\]\(\s*(?!<)placeholder:\s*([^\)\>]+)\)/g, (_, alt, inner) => {
+    return `![${alt}](<placeholder: ${inner.trim()}>)`;
+  });
+
+  return clean;
+}
+
 const TOC_PROMPT_SUGGESTION = "Tạo dàn ý bài giảng chi tiết, bao quát đầy đủ các tài liệu nguồn đã chọn";
 
 const SUGGEST_PROMPT_TYPES = [
@@ -125,7 +153,7 @@ const SUGGEST_PROMPT_TYPES = [
   { id: "exercise", label: "📝 Bài tập", name: "Bài tập" },
   { id: "discussion", label: "💬 Thảo luận", name: "Thảo luận" },
   { id: "case_study", label: "📂 Tình huống", name: "Tình huống" },
-  { id: "quiz", label: "❓ Trắc nghiệm", name: "Trắc nghiệm" },
+  { id: "practice", label: "🛠️ Thực hành", name: "Thực hành" },
 ];
 
 
@@ -620,6 +648,7 @@ export default function TeachingMaterialEditor() {
         content: changes.content,
         prompt: changes.prompt,
         order: changes.order,
+        level: changes.level,
       }).catch(() => {
         // Keep best-effort flush non-blocking on unload.
       });
@@ -642,6 +671,7 @@ export default function TeachingMaterialEditor() {
         content: changes.content,
         prompt: changes.prompt,
         order: changes.order,
+        level: changes.level,
       });
       delete pendingChangesRef.current[sectionId];
     }
@@ -665,6 +695,9 @@ export default function TeachingMaterialEditor() {
   const [suggestingPromptId, setSuggestingPromptId] = useState<string>("");
   const [showPromptSuggestions, setShowPromptSuggestions] = useState<boolean>(false);
   const [activeSuggestTab, setActiveSuggestTab] = useState<string>("theory");
+  const [dropMode, setDropMode] = useState<"reorder-before" | "reorder-after" | "nest" | null>(null);
+  const [deleteTargetSection, setDeleteTargetSection] = useState<Section | null>(null);
+  const [deleteChildrenCount, setDeleteChildrenCount] = useState<number>(0);
   const [suggestedPrompts, setSuggestedPrompts] = useState<Record<string, string>>({});
 
   interface HistoryEntry {
@@ -731,10 +764,10 @@ export default function TeachingMaterialEditor() {
   // Tracks which batch group is currently generating ("INTRO_GROUP" | "OUTRO_GROUP" | null)
   const [batchGeneratingGroupId, setBatchGeneratingGroupId] = useState<string | null>(null);
 
-  const inferLevelFromTitle = (title: string): number => {
+  const inferLevelFromTitle = (title: string): number | null => {
     const normalized = (title || "").trim();
     const matched = normalized.match(/^(\d+(?:\.\d+)*)/);
-    if (!matched) return 1;
+    if (!matched) return null;
     return Math.max(1, matched[1].split(".").length);
   };
 
@@ -779,7 +812,7 @@ export default function TeachingMaterialEditor() {
             order: item.order_index,
             level: Math.max(
               1,
-              item.level || inferLevelFromTitle(item.title || ""),
+              item.level || inferLevelFromTitle(item.title || "") || 1,
             ),
           };
         },
@@ -822,9 +855,16 @@ export default function TeachingMaterialEditor() {
       setHighlightedChunksBySection({});
       setEvaluationBySection(persistedEvaluations);
       setSections(merged);
-      if (merged.length > 0) {
-        setIsOutlineApproved(true);
+      const hasContent = merged.some((item) => item.content && item.content.trim().length > 0);
+      let isApproved = localStorage.getItem(`rag.outline.approved.${projectId}`) === "true";
+      if (merged.length > 0 && hasContent) {
+        isApproved = true;
+      }
+      setIsOutlineApproved(isApproved);
+      if (isApproved) {
         localStorage.setItem(`rag.outline.approved.${projectId}`, "true");
+      } else {
+        localStorage.removeItem(`rag.outline.approved.${projectId}`);
       }
       setOutlinePrompt(draft?.outlinePrompt || "");
       setActiveSectionId((prev) => {
@@ -859,6 +899,17 @@ export default function TeachingMaterialEditor() {
   // Derived state
   const activeSection =
     sections.find((s) => s.id === activeSectionId) || sections[0];
+  const dynamicSuggestPromptTypes = useMemo(() => {
+    const isPracticeSection = activeSection && ["thực hành", "lab", "thực tập", "vận dụng"].some(k => 
+      (activeSection.title || "").toLowerCase().includes(k)
+    );
+    return SUGGEST_PROMPT_TYPES.map(t => {
+      if (t.id === "exercise" && isPracticeSection) {
+        return { ...t, label: "🛠️ Thực hành", name: "Thực hành" };
+      }
+      return t;
+    });
+  }, [activeSection]);
   const activeChunks = activeSectionId
     ? chunksBySection[activeSectionId] || []
     : [];
@@ -941,6 +992,59 @@ export default function TeachingMaterialEditor() {
     () => sections.slice().sort((a, b) => a.order - b.order),
     [sections],
   );
+
+  const sectionPrefixes = useMemo(() => {
+    const list = sections;
+    const sorted = list.slice().sort((a, b) => a.order - b.order);
+    const prefixes: Record<string, string> = {};
+    const counts: number[] = [];
+    
+    for (const s of sorted) {
+      const lv = s.level || 1;
+      counts.length = lv;
+      counts[lv - 1] = (counts[lv - 1] || 0) + 1;
+      
+      if (lv === 1) {
+        prefixes[s.id] = `Chương ${counts[0]}.`;
+      } else {
+        prefixes[s.id] = counts.slice(0, lv).join(".");
+      }
+    }
+    return prefixes;
+  }, [sections]);
+
+  const getCleanTitle = (title: string): string => {
+    let clean = title || "";
+    if (clean.trim().startsWith("{") && clean.trim().endsWith("}")) {
+      try {
+        const parsed = JSON.parse(clean);
+        if (parsed && typeof parsed === "object") {
+          if (parsed.title) {
+            clean = parsed.title;
+          } else if (parsed.content) {
+            clean = parsed.content;
+          }
+        }
+      } catch (e) {
+        // Ignored
+      }
+    }
+    if (clean.includes("#")) {
+      const lines = clean.split("\n");
+      const headerLine = lines.find((l) => l.trim().startsWith("#"));
+      if (headerLine) {
+        clean = headerLine.replace(/^#+\s*/, "");
+      } else {
+        clean = lines[0] || "";
+      }
+    }
+    clean = clean
+      .replace(/^(Chương|Chuong)\s+\d+\.?\s*/i, "")
+      .replace(/^(\d+(?:\.\d+)*)/, "")
+      .trim();
+    clean = clean.replace(/^[\.\s\-:]+/, "").trim();
+    return clean;
+  };
   const generatedSectionsCount = useMemo(
     () =>
       sections.reduce(
@@ -1063,7 +1167,10 @@ export default function TeachingMaterialEditor() {
         if (item.id === sectionId) {
           const nextItem = { ...item, ...updates };
           if (updates.title !== undefined) {
-            nextItem.level = Math.max(1, inferLevelFromTitle(updates.title));
+            const inferred = inferLevelFromTitle(updates.title);
+            if (inferred !== null) {
+              nextItem.level = Math.max(1, inferred);
+            }
           }
           return nextItem;
         }
@@ -1094,6 +1201,7 @@ export default function TeachingMaterialEditor() {
           content: mergedChanges.content,
           prompt: mergedChanges.prompt,
           order: mergedChanges.order,
+          level: mergedChanges.level,
         });
         delete pendingChangesRef.current[sectionId];
         setSaveStatus("saved");
@@ -1149,7 +1257,12 @@ export default function TeachingMaterialEditor() {
       const cached = localStorage.getItem(`rag.suggestions.${activeSectionId}`);
       if (cached) {
         try {
-          setSuggestedPrompts(JSON.parse(cached));
+          const rawParsed = JSON.parse(cached);
+          const cleanedMap: Record<string, string> = {};
+          Object.entries(rawParsed).forEach(([k, v]) => {
+            cleanedMap[k] = cleanSuggestedPrompt(v as string);
+          });
+          setSuggestedPrompts(cleanedMap);
           const wasOpen = localStorage.getItem(`rag.suggestions.open.${activeSectionId}`) === "true";
           setShowPromptSuggestions(wasOpen);
         } catch {
@@ -1187,7 +1300,7 @@ export default function TeachingMaterialEditor() {
       if (res.success && res.data && res.data.suggestions) {
         const promptsMap: Record<string, string> = {};
         res.data.suggestions.forEach((item: any) => {
-          promptsMap[item.type] = item.prompt;
+          promptsMap[item.type] = cleanSuggestedPrompt(item.prompt || "");
         });
         setSuggestedPrompts(promptsMap);
         localStorage.setItem(`rag.suggestions.${sectionId}`, JSON.stringify(promptsMap));
@@ -1222,8 +1335,85 @@ export default function TeachingMaterialEditor() {
     return (section.content || "").trim().length > 0;
   };
 
+  const getChildrenSections = useCallback((parent: Section, list: Section[]): Section[] => {
+    const sorted = list.slice().sort((a, b) => a.order - b.order);
+    const parentIndex = sorted.findIndex((s) => s.id === parent.id);
+    if (parentIndex < 0) return [];
+    
+    const children: Section[] = [];
+    for (let i = parentIndex + 1; i < sorted.length; i++) {
+      if (sorted[i].level > parent.level) {
+        children.push(sorted[i]);
+      } else {
+        break;
+      }
+    }
+    return children;
+  }, []);
+
+  const generateNewChildTitle = useCallback((parent: Section, child: Section, list: Section[]): string => {
+    const parentTitle = (parent.title || "").trim();
+    const parentDottedMatch = parentTitle.match(/^(\d+(?:\.\d+)*)/);
+    const parentPrefix = parentDottedMatch ? parentDottedMatch[1] : "";
+    
+    if (!parentPrefix) {
+      return (child.title || "").replace(/^(\d+(?:\.\d+)*\s*)/, "");
+    }
+    
+    const children = getChildrenSections(parent, list);
+    const directChildren = children.filter((c) => c.level === parent.level + 1);
+    const nextChildIndex = directChildren.length + 1;
+    
+    const newPrefix = `${parentPrefix}.${nextChildIndex}`;
+    const childTitleClean = (child.title || "").replace(/^(\d+(?:\.\d+)*\s*)/, "");
+    
+    return `${newPrefix} ${childTitleClean}`;
+  }, [getChildrenSections]);
+
+  const handleNestSection = async (sourceId: string, targetId: string) => {
+    await flushPendingSavesAndWait();
+    const list = [...sections];
+    const sourceIndex = list.findIndex((item) => item.id === sourceId);
+    const targetIndex = list.findIndex((item) => item.id === targetId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+
+    const source = list[sourceIndex];
+    const target = list[targetIndex];
+
+    const nextLevel = target.level + 1;
+    const nextTitle = generateNewChildTitle(target, source, list);
+
+    source.level = nextLevel;
+    source.title = nextTitle;
+
+    const children = getChildrenSections(target, list);
+    list.splice(sourceIndex, 1);
+    const adjustedInsertIndex = list.findIndex((item) => item.id === (children.length > 0 ? children[children.length - 1].id : target.id));
+    list.splice(adjustedInsertIndex + 1, 0, source);
+
+    const nextSections = list.map((item, index) => ({
+      ...item,
+      order: index,
+    }));
+
+    setSections(nextSections);
+    toastService.success(`Đã lồng mục "${source.title}" làm con của "${target.title}"`);
+
+    if (projectId) {
+      setSaveStatus("saving");
+      try {
+        updateSection(source.id, { title: nextTitle, level: nextLevel });
+        await reorderEditorSections(projectId, nextSections.map((s) => s.id));
+        setSaveStatus("saved");
+        window.setTimeout(() => setSaveStatus("idle"), 1200);
+      } catch (err) {
+        setError("Không thể lưu cấu trúc lồng mục con mới.");
+      }
+    }
+  };
+
   const handleReorderSections = useCallback(
-    (sourceId: string, targetId: string) => {
+    (sourceId: string, targetId: string, mode: "reorder-before" | "reorder-after" | null = null) => {
       if (!sourceId || !targetId || sourceId === targetId) return;
 
       const sorted = sections.slice().sort((a, b) => a.order - b.order);
@@ -1233,7 +1423,16 @@ export default function TeachingMaterialEditor() {
 
       const reordered = [...sorted];
       const [moved] = reordered.splice(sourceIndex, 1);
-      reordered.splice(targetIndex, 0, moved);
+      
+      let insertIndex = reordered.findIndex((item) => item.id === targetId);
+      if (mode === "reorder-after") {
+        insertIndex += 1;
+      }
+      
+      reordered.splice(insertIndex, 0, moved);
+
+      const targetItem = sorted[targetIndex];
+      moved.level = targetItem.level;
 
       const nextSections = reordered.map((item, index) => ({
         ...item,
@@ -1241,6 +1440,7 @@ export default function TeachingMaterialEditor() {
       }));
 
       setSections(nextSections);
+      toastService.success("Đã thay đổi thứ tự mục bài giảng");
 
       if (projectId) {
         setSaveStatus("saving");
@@ -1378,7 +1578,7 @@ export default function TeachingMaterialEditor() {
                 order: item.order_index,
                 level: Math.max(
                   1,
-                  item.level || inferLevelFromTitle(item.title || ""),
+                  item.level || inferLevelFromTitle(item.title || "") || 1,
                 ),
               }));
               setSections(mapped);
@@ -1578,6 +1778,8 @@ export default function TeachingMaterialEditor() {
     try {
       setError("");
       setIsGeneratingOutline(true);
+      localStorage.removeItem(`rag.outline.approved.${projectId}`);
+      setIsOutlineApproved(false);
       const generatedSections = await toastService.promise(
         generateEditorProjectOutline(projectId, outlinePrompt.trim()),
         {
@@ -1596,7 +1798,7 @@ export default function TeachingMaterialEditor() {
           item.title || "",
         ),
         order: item.order_index,
-        level: Math.max(1, item.level || inferLevelFromTitle(item.title || "")),
+        level: Math.max(1, item.level || inferLevelFromTitle(item.title || "") || 1),
       }));
       setSections(mapped);
       setActiveSectionId(mapped[0]?.id || "");
@@ -1653,6 +1855,7 @@ export default function TeachingMaterialEditor() {
         title: defaultTitle,
         prompt: "",
         order: sections.length,
+        level: prevSection ? prevSection.level : 1,
       });
       const next: Section = {
         id: created.id,
@@ -1665,7 +1868,7 @@ export default function TeachingMaterialEditor() {
         order: created.order_index,
         level: Math.max(
           1,
-          created.level || inferLevelFromTitle(created.title || ""),
+          created.level || inferLevelFromTitle(created.title || "") || 1,
         ),
       };
       setSections((prev) => [...prev, next]);
@@ -1692,6 +1895,7 @@ export default function TeachingMaterialEditor() {
         title: defaultTitle,
         prompt: "",
         order: afterOrder + 1,
+        level: prevSection ? prevSection.level : 1,
       });
       await loadProject(false);
     } catch (e) {
@@ -1702,10 +1906,63 @@ export default function TeachingMaterialEditor() {
   const handleDeleteSection = async (sectionId: string) => {
     try {
       await flushPendingSavesAndWait();
+      const target = sections.find((s) => s.id === sectionId);
+      if (!target) return;
+
+      const children = getChildrenSections(target, sections);
+      if (children.length > 0) {
+        setDeleteTargetSection(target);
+        setDeleteChildrenCount(children.length);
+      } else {
+        await executeDeleteSection(sectionId);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không xóa được mục.");
+    }
+  };
+
+  const executeDeleteSection = async (sectionId: string, deleteChildren = false) => {
+    try {
+      setDeleteTargetSection(null);
+      await flushPendingSavesAndWait();
+      
+      if (deleteChildren) {
+        const target = sections.find((s) => s.id === sectionId);
+        if (target) {
+          const children = getChildrenSections(target, sections);
+          for (const child of children) {
+            await deleteEditorSection(child.id);
+          }
+        }
+      } else {
+        const target = sections.find((s) => s.id === sectionId);
+        if (target) {
+          const children = getChildrenSections(target, sections);
+          for (const child of children) {
+            const nextLevel = Math.max(1, child.level - 1);
+            const childTitleClean = (child.title || "").replace(/^(\d+(?:\.\d+)*\s*)/, "");
+            let nextTitle = childTitleClean;
+            if (nextLevel > 1) {
+              const targetPrefixMatch = (target.title || "").match(/^(\d+(?:\.\d+)*)/);
+              if (targetPrefixMatch) {
+                const parentPrefixParts = targetPrefixMatch[1].split(".");
+                parentPrefixParts.pop();
+                const parentPrefix = parentPrefixParts.join(".");
+                if (parentPrefix) {
+                  nextTitle = `${parentPrefix}.${child.order} ${childTitleClean}`;
+                }
+              }
+            }
+            updateSection(child.id, { title: nextTitle, level: nextLevel });
+          }
+        }
+      }
+
       await deleteEditorSection(sectionId);
       await loadProject(false);
+      toastService.success("Đã xóa mục thành công.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Không xóa được section");
+      setError(e instanceof Error ? e.message : "Không xóa được mục.");
     }
   };
 
@@ -1828,7 +2085,7 @@ export default function TeachingMaterialEditor() {
             item.title || "",
           ),
           order: item.order_index,
-          level: Math.max(1, item.level || inferLevelFromTitle(item.title || "")),
+          level: Math.max(1, item.level || inferLevelFromTitle(item.title || "") || 1),
         }));
         setSections(mapped);
         if (mapped.length > 0) {
@@ -1948,7 +2205,11 @@ export default function TeachingMaterialEditor() {
           {/* Global Theme Toggle (Trắng/Đen) */}
           <button
             onClick={toggleTheme}
-            className="flex items-center justify-center h-9 w-9 text-slate-500 hover:text-slate-800 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg transition-all duration-200 focus:outline-none"
+            className={`flex items-center justify-center h-9 w-9 border rounded-lg transition-all duration-200 focus:outline-none ${
+              theme === "light"
+                ? "text-slate-500 border-slate-200 bg-white hover:text-violet-600 hover:bg-violet-50 hover:border-violet-200"
+                : "text-slate-400 border-slate-700 bg-slate-900 hover:text-amber-400 hover:bg-amber-950/40 hover:border-amber-900/50"
+            }`}
             title={theme === "light" ? "Chuyển sang nền tối (Dark mode)" : "Chuyển sang nền sáng (Light mode)"}
           >
             {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
@@ -1969,27 +2230,34 @@ export default function TeachingMaterialEditor() {
                 <Edit3 size={15} />
                 <span>{editMode ? "Chế độ Sửa" : "Chế độ Đọc"}</span>
               </button>
+              
+              {/* Preview Button */}
               <button
                 onClick={() => void handleOpenPreviewTab()}
-                className="flex items-center gap-1.5 h-9 px-3.5 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg font-medium transition duration-200 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-500/10"
+                className="flex items-center gap-1.5 h-9 px-3.5 bg-emerald-50/50 hover:bg-emerald-100/70 active:bg-emerald-200/50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-300 dark:hover:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/50 rounded-lg font-medium transition duration-200 text-sm shadow-sm focus:outline-none"
+                title="Xem trước giao diện hiển thị bài giảng học sinh"
               >
                 <Eye size={15} />
                 <span>Xem trước</span>
               </button>
 
+              {/* Create Quiz Button */}
               <button
                 onClick={() => handleOpenQuizTab()}
-                className="flex items-center gap-1.5 h-9 px-3.5 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg font-medium transition duration-200 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-500/10"
+                className="flex items-center gap-1.5 h-9 px-3.5 bg-violet-50/50 hover:bg-violet-100/70 active:bg-violet-200/50 text-violet-700 dark:bg-violet-950/20 dark:text-violet-300 dark:hover:bg-violet-950/40 border border-violet-200 dark:border-violet-900/50 rounded-lg font-medium transition duration-200 text-sm shadow-sm focus:outline-none"
+                title="Tạo tự động câu hỏi trắc nghiệm ôn tập bằng AI"
               >
                 <HelpCircle size={15} className="text-violet-500" />
                 <span>Tạo Quiz</span>
               </button>
               
+              {/* Download Dropdown */}
               <div className="relative" ref={downloadMenuRef}>
                 <button
                   onClick={() => setIsDownloadMenuOpen((prev) => !prev)}
                   disabled={Boolean(exportingFormat)}
-                  className="flex items-center gap-1.5 h-9 px-3.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-lg font-medium transition duration-200 text-sm shadow-sm hover:shadow focus:outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60"
+                  className="flex items-center gap-1.5 h-9 px-3.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-lg font-medium transition duration-200 text-sm shadow-sm hover:shadow focus:outline-none disabled:opacity-60"
+                  title="Tải bài giảng về máy (Word, Markdown, PDF, ...)"
                 >
                   <Download size={15} />
                   <span>Tải về</span>
@@ -2021,13 +2289,16 @@ export default function TeachingMaterialEditor() {
                   </div>
                 )}
               </div>
+
+              {/* Toggle Context Panel Button */}
               <button
                 onClick={() => setShowContext(!showContext)}
-                className={`h-9 w-9 flex items-center justify-center rounded-lg transition-all duration-200 ${
+                className={`h-9 w-9 flex items-center justify-center rounded-lg transition-all duration-200 border focus:outline-none ${
                   showContext 
-                    ? "bg-blue-50 text-blue-600 border border-blue-100" 
-                    : "text-slate-500 hover:bg-slate-100 border border-slate-200 bg-white"
+                    ? "bg-indigo-600 hover:bg-indigo-700 text-white border-transparent shadow-md dark:bg-indigo-600 dark:hover:bg-indigo-700" 
+                    : "text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 border-slate-200 bg-white dark:text-slate-400 dark:hover:bg-indigo-950/40 dark:hover:text-indigo-400 dark:border-slate-700"
                 }`}
+                title={showContext ? "Đóng bảng Tài liệu nguồn & Lịch sử" : "Mở bảng Tài liệu nguồn & Lịch sử"}
               >
                 <PanelRight size={18} />
               </button>
@@ -2066,14 +2337,20 @@ export default function TeachingMaterialEditor() {
               </p>
 
                <textarea
-                ref={outlinePromptRef}
+                ref={(el) => {
+                  outlinePromptRef.current = el;
+                  if (el) {
+                    el.style.height = "auto";
+                    el.style.height = `${el.scrollHeight}px`;
+                  }
+                }}
                 value={outlinePrompt}
                 onChange={(e) => {
                   setOutlinePrompt(e.target.value);
                   e.target.style.height = "auto";
                   e.target.style.height = `${e.target.scrollHeight}px`;
                 }}
-                className="w-full border border-slate-200/85 rounded-xl p-4 min-h-[85px] max-h-[300px] overflow-y-auto resize-none text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all duration-200 shadow-inner bg-slate-50/50 focus:bg-white text-sm"
+                className="w-full border border-slate-200/85 rounded-xl p-4 min-h-[85px] max-h-[300px] overflow-y-auto resize-none text-slate-700 outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-colors duration-200 shadow-inner bg-slate-50/50 focus:bg-white text-sm"
                 placeholder={TOC_PROMPT_SUGGESTION}
               />
               <div className="mt-5 flex justify-end">
@@ -2093,7 +2370,7 @@ export default function TeachingMaterialEditor() {
                     </>
                   ) : (
                     <>
-                      <Sparkles size={16} />
+                      <BookOpen size={16} />
                       <span>Sinh mục lục</span>
                     </>
                   )}
@@ -2149,8 +2426,21 @@ export default function TeachingMaterialEditor() {
                         }
                         event.preventDefault();
                         event.dataTransfer.dropEffect = "move";
-                        if (dragOverSectionId !== s.id) {
+                        
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        const relativeY = event.clientY - rect.top;
+                        const height = rect.height;
+                        
+                        let mode: "reorder-before" | "reorder-after" | "nest" = "nest";
+                        if (relativeY < height * 0.25) {
+                          mode = "reorder-before";
+                        } else if (relativeY > height * 0.75) {
+                          mode = "reorder-after";
+                        }
+                        
+                        if (dragOverSectionId !== s.id || dropMode !== mode) {
                           setDragOverSectionId(s.id);
+                          setDropMode(mode);
                         }
                       }}
                       onDrop={(event) => {
@@ -2160,21 +2450,33 @@ export default function TeachingMaterialEditor() {
                           draggingSectionId ||
                           "";
                         if (sourceId && sourceId !== s.id) {
-                          handleReorderSections(sourceId, s.id);
+                          if (dropMode === "nest") {
+                            void handleNestSection(sourceId, s.id);
+                          } else {
+                            void handleReorderSections(sourceId, s.id, dropMode);
+                          }
                         }
                         setDraggingSectionId(null);
                         setDragOverSectionId(null);
+                        setDropMode(null);
                       }}
                       onDragEnd={() => {
                         setDraggingSectionId(null);
                         setDragOverSectionId(null);
+                        setDropMode(null);
                       }}
                       className={`group flex items-center justify-between py-2.5 px-4 rounded-xl border cursor-pointer transition-all duration-200 ${
                         isSelected
                           ? "bg-blue-50/80 border-blue-200 text-blue-800 dark:bg-blue-950/40 dark:border-blue-900/50 dark:text-blue-300 shadow-sm font-semibold"
                           : "bg-white border-slate-100 dark:bg-slate-900/50 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 hover:border-slate-200 dark:hover:bg-slate-900"
                       } ${
-                        isDropTarget ? "ring-2 ring-blue-200 bg-blue-50/70" : ""
+                        isDropTarget && dropMode === "nest"
+                          ? "ring-2 ring-blue-400 bg-blue-50/80 dark:bg-blue-950/50"
+                          : isDropTarget && dropMode === "reorder-before"
+                          ? "border-t-2 border-t-blue-500 bg-blue-50/10 dark:bg-blue-950/10"
+                          : isDropTarget && dropMode === "reorder-after"
+                          ? "border-b-2 border-b-blue-500 bg-blue-50/10 dark:bg-blue-950/10"
+                          : ""
                       } ${isDragging ? "opacity-60" : ""}`}
                       style={{ marginLeft: `${Math.max(0, s.level - 1) * 24}px` }}
                     >
@@ -2190,17 +2492,29 @@ export default function TeachingMaterialEditor() {
                             {s.level === 2 ? "├─" : "└─"}
                           </span>
                         )}
+                        <span className="text-slate-600 dark:text-slate-400 font-mono text-xs select-none font-bold shrink-0">
+                          {sectionPrefixes[s.id] || ""}
+                        </span>
                         <input
                           type="text"
-                          value={s.title}
-                          onChange={(e) => updateSection(s.id, { title: e.target.value })}
+                          value={getCleanTitle(s.title)}
+                          onChange={(e) => {
+                            const clean = e.target.value;
+                            const prefix = sectionPrefixes[s.id] || "";
+                            let formattedPrefix = prefix;
+                            if (prefix && !prefix.startsWith("Chương") && !prefix.startsWith("Chuong")) {
+                              formattedPrefix = prefix.endsWith(".") ? prefix : `${prefix}.`;
+                            }
+                            const fullTitle = formattedPrefix ? `${formattedPrefix} ${clean}` : clean;
+                            updateSection(s.id, { title: fullTitle });
+                          }}
                           onClick={(e) => e.stopPropagation()}
                           className={`bg-transparent border-none outline-none focus:ring-1 focus:ring-blue-400 dark:focus:ring-blue-500 focus:bg-white dark:focus:bg-slate-800 px-1.5 py-0.5 rounded text-sm w-full min-w-0 transition-all duration-150 ${
                             s.level === 1
-                              ? "font-bold text-slate-800 dark:text-slate-100"
+                              ? "font-bold text-slate-900 dark:text-slate-100"
                               : s.level === 2
-                              ? "font-semibold text-slate-700 dark:text-slate-200"
-                              : "text-slate-500 dark:text-slate-400"
+                              ? "font-semibold text-slate-800 dark:text-slate-200"
+                              : "font-medium text-slate-700 dark:text-slate-300"
                           }`}
                           title="Click để sửa nhanh tiêu đề"
                         />
@@ -2229,7 +2543,13 @@ export default function TeachingMaterialEditor() {
                             <Trash2 size={14} />
                           </button>
                         </div>
-                        <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200/50 dark:border-slate-700/50">
+                        <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full border transition-all duration-200 select-none ${
+                          s.level === 1
+                            ? "bg-blue-50 text-blue-600 border-blue-200/60 dark:bg-blue-950/30 dark:text-blue-400 dark:border-blue-800/40"
+                            : s.level === 2
+                            ? "bg-emerald-50 text-emerald-600 border-emerald-200/60 dark:bg-emerald-950/30 dark:text-emerald-400 dark:border-emerald-800/40"
+                            : "bg-purple-50 text-purple-600 border-purple-200/60 dark:bg-purple-950/30 dark:text-purple-400 dark:border-purple-800/40"
+                        }`}>
                           Cấp {s.level}
                         </span>
                       </div>
@@ -2246,7 +2566,7 @@ export default function TeachingMaterialEditor() {
                   </label>
                   {activeSection && (
                     <span className="text-xs text-blue-600 font-semibold bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-100">
-                      Đang chọn mục: {activeSection.title}
+                      Đang chọn mục: {getCleanTitle(activeSection.title)}
                     </span>
                   )}
                 </div>
@@ -2264,7 +2584,11 @@ export default function TeachingMaterialEditor() {
                   <button
                     onClick={handleUpdateStructure}
                     disabled={isUpdatingStructure || !structurePromptText.trim()}
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-3 rounded-xl transition duration-200 text-sm disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 shadow-md shadow-blue-500/10 hover:shadow-blue-500/20 shrink-0"
+                    className={`font-bold px-6 py-3 rounded-xl transition duration-200 text-sm flex items-center gap-2 shadow-md shrink-0 ${
+                      isUpdatingStructure || !structurePromptText.trim()
+                        ? "bg-slate-100 text-slate-400 border border-transparent cursor-not-allowed"
+                        : "bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:via-indigo-700 hover:to-purple-700 text-white shadow-indigo-500/20 hover:shadow-lg hover:shadow-indigo-500/30"
+                    }`}
                   >
                     {isUpdatingStructure ? (
                       <>
@@ -2273,7 +2597,7 @@ export default function TeachingMaterialEditor() {
                       </>
                     ) : (
                       <>
-                        <Sparkles size={16} />
+                        <BookOpen size={16} />
                         <span>Cập nhật cấu trúc</span>
                       </>
                     )}
@@ -2385,8 +2709,21 @@ export default function TeachingMaterialEditor() {
                       }
                       event.preventDefault();
                       event.dataTransfer.dropEffect = "move";
-                      if (dragOverSectionId !== s.id) {
+                      
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      const relativeY = event.clientY - rect.top;
+                      const height = rect.height;
+                      
+                      let mode: "reorder-before" | "reorder-after" | "nest" = "nest";
+                      if (relativeY < height * 0.25) {
+                        mode = "reorder-before";
+                      } else if (relativeY > height * 0.75) {
+                        mode = "reorder-after";
+                      }
+                      
+                      if (dragOverSectionId !== s.id || dropMode !== mode) {
                         setDragOverSectionId(s.id);
+                        setDropMode(mode);
                       }
                     }}
                     onDrop={(event) => {
@@ -2396,22 +2733,34 @@ export default function TeachingMaterialEditor() {
                         draggingSectionId ||
                         "";
                       if (sourceId && sourceId !== s.id) {
-                        handleReorderSections(sourceId, s.id);
+                        if (dropMode === "nest") {
+                          void handleNestSection(sourceId, s.id);
+                        } else {
+                          void handleReorderSections(sourceId, s.id, dropMode);
+                        }
                       }
                       setDraggingSectionId(null);
                       setDragOverSectionId(null);
+                      setDropMode(null);
                     }}
                     onDragEnd={() => {
                       setDraggingSectionId(null);
                       setDragOverSectionId(null);
+                      setDropMode(null);
                     }}
                     className={`group flex items-center gap-2 mx-1 px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 ${
                       isActive
                         ? "bg-blue-50 text-blue-700 font-semibold border border-blue-100/50 shadow-sm"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                    } ${isDropTarget ? "ring-2 ring-blue-200 bg-blue-50/70" : ""} ${
-                      isDragging ? "opacity-60" : ""
-                    }`}
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-transparent"
+                    } ${
+                      isDropTarget && dropMode === "nest"
+                        ? "ring-2 ring-blue-400 bg-blue-50/50"
+                        : isDropTarget && dropMode === "reorder-before"
+                        ? "border-t-2 border-t-blue-500 bg-blue-50/10"
+                        : isDropTarget && dropMode === "reorder-after"
+                        ? "border-b-2 border-b-blue-500 bg-blue-50/10"
+                        : ""
+                    } ${isDragging ? "opacity-60" : ""}`}
                   >
                     <GripVertical
                       size={13}
@@ -2431,12 +2780,15 @@ export default function TeachingMaterialEditor() {
                         </span>
                       )}
                       <span
-                        className={`truncate text-xs ${
-                          s.level === 1 ? "font-bold text-slate-800" : s.level === 2 ? "font-medium text-slate-700" : "text-slate-500 text-[11px]"
+                        className={`truncate text-xs flex items-center gap-1 min-w-0 ${
+                          s.level === 1 ? "font-bold text-slate-900" : s.level === 2 ? "font-semibold text-slate-800" : "font-medium text-slate-700 text-[11.5px]"
                         }`}
                         title={s.title}
                       >
-                        {s.title}
+                        <span className="text-slate-600 dark:text-slate-400 font-mono text-[10px] shrink-0 select-none font-bold">
+                          {sectionPrefixes[s.id] || ""}
+                        </span>
+                        <span className="truncate">{getCleanTitle(s.title)}</span>
                       </span>
                     </div>
                     {s.isGenerating ? (
@@ -2466,7 +2818,7 @@ export default function TeachingMaterialEditor() {
                         e.stopPropagation();
                         void handleDeleteSection(s.id);
                       }}
-                      className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 p-0.5 hover:bg-white rounded transition-all duration-150"
+                      className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-600 p-0.5 hover:bg-white rounded transition-all duration-150"
                       title="Xóa mục"
                     >
                       <Trash2 size={12} />
@@ -2501,14 +2853,26 @@ export default function TeachingMaterialEditor() {
                 {/* Section Header & Settings */}
                 <div className="p-6 border-b border-slate-200/60 shrink-0 bg-slate-50/30">
 
-                  <input
-                    value={activeSection.title}
-                    onChange={(e) =>
-                      updateSection(activeSection.id, { title: e.target.value })
-                    }
-                    className="text-xl font-bold bg-transparent border-none outline-none w-full text-slate-800 mb-4 placeholder-slate-300 font-display focus:ring-0"
-                    placeholder="Tên section (VD: Mục tiêu bài học)..."
-                  />
+                  <div className="flex items-center gap-2 mb-4">
+                    <span className="text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-lg select-none whitespace-nowrap shrink-0">
+                      {sectionPrefixes[activeSection.id] || ""}
+                    </span>
+                    <input
+                      value={getCleanTitle(activeSection.title)}
+                      onChange={(e) => {
+                        const clean = e.target.value;
+                        const prefix = sectionPrefixes[activeSection.id] || "";
+                        let formattedPrefix = prefix;
+                        if (prefix && !prefix.startsWith("Chương") && !prefix.startsWith("Chuong")) {
+                          formattedPrefix = prefix.endsWith(".") ? prefix : `${prefix}.`;
+                        }
+                        const fullTitle = formattedPrefix ? `${formattedPrefix} ${clean}` : clean;
+                        updateSection(activeSection.id, { title: fullTitle });
+                      }}
+                      className="text-xl font-bold bg-transparent border-none outline-none w-full text-slate-800 dark:text-slate-100 placeholder-slate-300 font-display focus:ring-0"
+                      placeholder="Tên mục (VD: Thực hành)..."
+                    />
+                  </div>
 
                   <div className="bg-slate-50/60 hover:bg-slate-50 border border-slate-200/80 rounded-xl p-4 relative group focus-within:border-blue-500 focus-within:bg-white focus-within:ring-4 focus-within:ring-blue-500/10 transition-all duration-200 shadow-sm w-full">
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-start gap-4 w-full">
@@ -2565,7 +2929,7 @@ export default function TeachingMaterialEditor() {
                             </button>
                           </div>
                         </div>
-                        <textarea
+                         <textarea
                           spellCheck={false}
                           ref={promptInputRef}
                           value={activeSection.prompt}
@@ -2574,10 +2938,10 @@ export default function TeachingMaterialEditor() {
                               prompt: e.target.value,
                             });
                             e.target.style.height = "auto";
-                            e.target.style.height = `${Math.min(120, e.target.scrollHeight)}px`;
+                            e.target.style.height = `${Math.min(160, e.target.scrollHeight)}px`;
                           }}
                           rows={1}
-                          className="w-full bg-transparent border-none outline-none resize-none text-slate-700 min-h-[40px] max-h-[120px] overflow-y-auto text-sm leading-relaxed placeholder:text-slate-400/80 custom-scrollbar"
+                          className="w-full bg-transparent border-none outline-none resize-none text-slate-700 min-h-[28px] max-h-[160px] overflow-y-auto text-sm leading-relaxed py-1 placeholder:text-slate-400/80 custom-scrollbar"
                           placeholder="Hãy mô tả chi tiết yêu cầu của bạn, càng mô tả chi tiết, tài liệu tạo ra càng chính xác."
                         />
                         {/* ⚠️ Order warning */}
@@ -2595,9 +2959,7 @@ export default function TeachingMaterialEditor() {
                           className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold transition-all duration-200 text-sm shadow-sm ${
                             activeSection.isGenerating 
                               ? "bg-slate-100 text-slate-400 cursor-not-allowed border border-transparent" 
-                              : activeSection.content 
-                                ? "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-800 dark:hover:bg-slate-800" 
-                                : "bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:via-indigo-700 hover:to-purple-700 text-white shadow-md shadow-indigo-500/20 hover:shadow-lg hover:shadow-indigo-500/30"
+                              : "bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:via-indigo-700 hover:to-purple-700 text-white shadow-md shadow-indigo-500/20 hover:shadow-lg hover:shadow-indigo-500/30"
                           }`}
                         >
                           {activeSection.isGenerating ? (
@@ -2607,7 +2969,7 @@ export default function TeachingMaterialEditor() {
                             </>
                           ) : (
                             <>
-                              <Sparkles size={14} className="text-white shrink-0" />
+                              <BookOpen size={14} className="text-white shrink-0" />
                               <span>{activeSection.content ? "Tạo lại" : "Tạo nội dung"}</span>
                             </>
                           )}
@@ -2625,7 +2987,12 @@ export default function TeachingMaterialEditor() {
                           </span>
                           <button
                             type="button"
-                            onClick={() => setShowPromptSuggestions(false)}
+                            onClick={() => {
+                              setShowPromptSuggestions(false);
+                              if (activeSectionId) {
+                                localStorage.setItem(`rag.suggestions.open.${activeSectionId}`, "false");
+                              }
+                            }}
                             className="text-[10px] text-slate-400 hover:text-slate-600 font-semibold"
                           >
                             Đóng
@@ -2634,7 +3001,7 @@ export default function TeachingMaterialEditor() {
 
                         {/* Prompt Type Tabs */}
                         <div className="flex flex-wrap gap-1">
-                          {SUGGEST_PROMPT_TYPES.map((t) => {
+                          {dynamicSuggestPromptTypes.map((t) => {
                             const isActive = activeSuggestTab === t.id;
                             return (
                               <button
@@ -2683,7 +3050,7 @@ export default function TeachingMaterialEditor() {
                                     window.setTimeout(() => {
                                       if (promptInputRef.current) {
                                         promptInputRef.current.style.height = "auto";
-                                        promptInputRef.current.style.height = `${Math.min(120, promptInputRef.current.scrollHeight)}px`;
+                                        promptInputRef.current.style.height = `${Math.min(160, promptInputRef.current.scrollHeight)}px`;
                                       }
                                     }, 50);
                                   }}
@@ -2824,12 +3191,7 @@ export default function TeachingMaterialEditor() {
           {/* Right Column: Context/RAG Panel */}
           {showContext && (
             <aside className="w-80 bg-slate-50 border-l border-slate-200/60 flex flex-col shrink-0 z-10 transition-all duration-300">
-              <div className="p-4 border-b border-slate-100 bg-white">
-                <h3 className="font-bold text-slate-800 text-sm font-display uppercase tracking-wider">Knowledge Base</h3>
-                <p className="text-[10px] text-slate-400 font-medium mt-0.5">
-                  Các nguồn tài liệu và đánh giá cho section này
-                </p>
-              </div>
+
               <div className="flex-1 overflow-y-auto p-0 custom-scrollbar">
                 <div className="bg-white flex flex-col min-h-full">
                   <div className="p-2 border-b border-slate-100 bg-slate-50/50">
@@ -3121,6 +3483,39 @@ export default function TeachingMaterialEditor() {
               </div>
             </aside>
           )}
+        </div>
+      )}
+
+      {deleteTargetSection && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-2xl max-w-md w-full mx-4 animate-in zoom-in-95 duration-150">
+            <h3 className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 mb-3">
+              ⚠️ Xóa Mục Có Chứa Mục Con
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
+              Mục <strong className="text-slate-800 dark:text-slate-200">"{deleteTargetSection.title}"</strong> bạn chọn xóa có chứa <strong className="text-blue-600">{deleteChildrenCount} mục con</strong> trực thuộc phía dưới. Bạn muốn xử lý thế nào?
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => void executeDeleteSection(deleteTargetSection.id, true)}
+                className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 rounded-xl text-xs transition duration-150"
+              >
+                Xóa mục cha và Xóa tất cả các mục con
+              </button>
+              <button
+                onClick={() => void executeDeleteSection(deleteTargetSection.id, false)}
+                className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-300 font-bold py-2.5 rounded-xl text-xs transition duration-150"
+              >
+                Chỉ xóa mục cha (Giữ lại & Đôn các mục con lên)
+              </button>
+              <button
+                onClick={() => setDeleteTargetSection(null)}
+                className="w-full bg-white hover:bg-slate-50 text-slate-500 border border-slate-200 dark:bg-slate-950 dark:hover:bg-slate-900 dark:text-slate-400 dark:border-slate-800 font-bold py-2.5 rounded-xl text-xs transition duration-150 mt-2"
+              >
+                Hủy bỏ
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

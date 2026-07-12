@@ -349,21 +349,48 @@ function EnhancedMarkdownRendererInternal({
   // Preprocess content to wrap placeholder URLs containing spaces in angle brackets < > and convert math delimiters to custom code blocks
   const processedContent = useMemo(() => {
     if (!content) return "";
-    const wrappedPlaceholders = content.replace(
-      /!\s*\[([^\]]*)\][\s\n\r]*\(\s*(<\/?placeholder:[^>\n\r]*>|\/?placeholder:[^\)\n\r]*)\s*\)/g,
+    let clean = content;
+
+    // 1. Fix ![placeholder: Vietnamese | English] where there is no following (
+    clean = clean.replace(/!\[placeholder:\s*([^\]]+)\](?!\()/g, (_, contentStr) => {
+      let vi = contentStr.trim();
+      let en = "";
+      if (vi.includes("|")) {
+        const parts = vi.split("|");
+        vi = (parts[0] || "").trim();
+        en = (parts[1] || "").trim();
+      } else {
+        en = `Minimalist 2D vector art, clean design, scientific style, white background, no text clutter, ${vi}`;
+      }
+      vi = vi.replace(/[<>]/g, "").trim();
+      en = en.replace(/[<>]/g, "").trim();
+      return `![Sơ đồ minh họa](<placeholder: ${vi} | ${en}>)`;
+    });
+
+    // 2. Fix ![Vietnamese | English] (no placeholder: prefix, no following parenthesis)
+    clean = clean.replace(/!\[([^\]\|]+)\|([^\]]+)\](?!\()/g, (_, vi, en) => {
+      let cleanVi = vi.trim().replace(/[<>]/g, "");
+      let cleanEn = en.trim().replace(/[<>]/g, "");
+      if (cleanVi.startsWith("placeholder:")) {
+        cleanVi = cleanVi.substring("placeholder:".length).trim();
+      }
+      return `![Sơ đồ minh họa](<placeholder: ${cleanVi} | ${cleanEn}>)`;
+    });
+
+    // 3. Fix ![Alt](placeholder: ...) -> ![Alt](<placeholder: ...>) if angle brackets are missing
+    clean = clean.replace(/!\[([^\]]*)\]\(\s*(?!<)placeholder:\s*([^\)\>]+)\)/g, (_, alt, inner) => {
+      return `![${alt}](<placeholder: ${inner.trim()}>)`;
+    });
+
+    // 4. Standard placeholder wrapping for anything matching standard syntax
+    const wrappedPlaceholders = clean.replace(
+      /!\s*\[([^\]]*)\][\s\n\r]*\(\s*<\s*(placeholder:[\s\S]*?)\s*>\s*\)/g,
       (_, alt, path) => {
         let cleanPath = path.trim();
-        // Decode URL to clear any pre-existing %20 or encoded characters
         try {
           cleanPath = decodeURIComponent(cleanPath);
         } catch (e) {
           // ignore
-        }
-        if (cleanPath.startsWith("<") && cleanPath.endsWith(">")) {
-          cleanPath = cleanPath.slice(1, -1);
-        }
-        if (cleanPath.startsWith("/")) {
-          cleanPath = cleanPath.substring(1);
         }
         const prefix = "placeholder:";
         const description = cleanPath.substring(prefix.length);

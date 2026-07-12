@@ -63,6 +63,7 @@ export const createEditorSection = async (payload: {
   title: string;
   prompt?: string;
   order?: number;
+  level?: number;
 }): Promise<EditorSection> => {
   const response = await apiClient.post<{
     success: boolean;
@@ -82,6 +83,7 @@ export const patchEditorSection = async (
     content?: string;
     prompt?: string;
     order?: number;
+    level?: number;
   },
 ): Promise<EditorSection> => {
   const response = await apiClient.patch<{

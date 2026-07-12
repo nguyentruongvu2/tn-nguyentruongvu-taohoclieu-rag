@@ -182,6 +182,7 @@ async def create_section_endpoint(
         title=request.title,
         prompt=prompt_value,
         order_index=request.order,
+        level=request.level or 1,
     )
     return {"success": True, "section": created}
 
@@ -285,8 +286,8 @@ async def generate_project_outline_endpoint(
             "   - 'Topic' or 'Content'.\n"
             "3. Extract all actual theory chapters (e.g., 'Chương 1...', 'Chương 2...') and their sub-sections (e.g., '1.1...', '1.2...', '7.1.1...').\n\n"
             "CONSTRAINTS & FILTERING:\n"
-            "- ONLY extract actual theory lecture contents.\n"
-            "- STRICTLY IGNORE practical/lab sessions ('Thực hành'), mid-term/final exams ('Thi học kỳ', 'Kiểm tra giữa kỳ'), general review sessions ('Ôn tập'), or general introductions that do not contain specific theoretical sub-topics.\n"
+            "- Extract both theory lectures and practical/practice sessions ('Thực hành') if they are part of the course schedule.\n"
+            "- STRICTLY IGNORE mid-term/final exams ('Thi học kỳ', 'Kiểm tra giữa kỳ'), general review sessions ('Ôn tập'), or general introductions that do not contain specific topics.\n"
             "- DO NOT alter, translate, or strip the original numbering prefixes (keep 'Chương 1', '1.1', '1.1.1' exactly as they appear in the source text).\n\n"
             "OUTPUT FORMAT:\n"
             "- Return pure Markdown headings only. No explanations, no introduction, no markdown blockquotes.\n"
@@ -349,6 +350,7 @@ async def generate_project_outline_endpoint(
             {
                 "title": str(item.get("title") or "").strip(),
                 "prompt": "",
+                "level": int(item.get("level") or 1),
                 "order_index": int(item.get("order_index") or idx),
             }
             for idx, item in enumerate(parsed)
@@ -1135,6 +1137,7 @@ async def update_section_endpoint(
         content_markdown=request.content,
         prompt=request.prompt,
         order_index=request.order,
+        level=request.level,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Section not found")
@@ -1457,6 +1460,29 @@ async def edit_selection_endpoint(
     }
 
 
+def _fix_prompt_placeholders(text: str) -> str:
+    if not text:
+        return ""
+    import re
+    def replace_broken_placeholder(match):
+        content = match.group(1).strip()
+        if "|" in content:
+            parts = content.split("|", 1)
+            vi = parts[0].strip()
+            en = parts[1].strip()
+        else:
+            vi = content
+            en = f"Minimalist 2D vector art, clean design, scientific style, white background, no text clutter, {content}"
+        
+        vi = vi.replace("<", "").replace(">", "").strip()
+        en = en.replace("<", "").replace(">", "").strip()
+        return f"![Sơ đồ minh họa](<placeholder: {vi} | {en}>)"
+
+    fixed = re.sub(r'!\[placeholder:\s*([^\]]+)\](?!\()', replace_broken_placeholder, text)
+    fixed = re.sub(r'!\[([^\]]*)\]\(\s*(?!<)placeholder:\s*([^\)\>]+)\)', r'![\1](<placeholder: \2>)', fixed)
+    return fixed
+
+
 def _parse_suggested_prompts_json(raw: str) -> dict[str, Any] | None:
     """Robustly parse LLM output JSON for prompt suggestions.
     
@@ -1477,7 +1503,12 @@ def _parse_suggested_prompts_json(raw: str) -> dict[str, Any] | None:
 
     # Try strict parse first
     try:
-        return json.loads(cleaned)
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, dict) and "suggestions" in parsed:
+            for sug in parsed["suggestions"]:
+                if isinstance(sug, dict) and "prompt" in sug:
+                    sug["prompt"] = _fix_prompt_placeholders(sug["prompt"])
+        return parsed
     except Exception:
         pass
 
@@ -1504,10 +1535,11 @@ def _parse_suggested_prompts_json(raw: str) -> dict[str, Any] | None:
                 prompt_m = re.search(r'"prompt"\s*:\s*"([\s\S]*?)"', b)
 
                 if type_m and title_m and prompt_m:
+                    prompt_val = prompt_m.group(1).replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t').replace('\\\\', '\\').strip()
                     suggestions.append({
                         "type": type_m.group(1).replace('\\"', '"').strip(),
                         "title": title_m.group(1).replace('\\"', '"').strip(),
-                        "prompt": prompt_m.group(1).replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t').replace('\\\\', '\\').strip()
+                        "prompt": _fix_prompt_placeholders(prompt_val)
                     })
 
         if topic or keywords or suggestions:
@@ -1574,9 +1606,9 @@ async def suggest_section_prompt_endpoint(
             "prompt": f"Dựa trên tài liệu tham khảo, hãy thiết kế một case study thực tế chi tiết về chủ đề {section_title} để học viên phân tích."
         },
         {
-            "type": "quiz",
-            "title": "Sinh Câu hỏi Trắc nghiệm",
-            "prompt": f"Dựa trên tài liệu tham khảo, hãy tạo 5 câu hỏi trắc nghiệm khách quan đa lựa chọn (Multiple Choice Questions) kèm đáp án giải thích cho mục: {section_title}."
+            "type": "practice",
+            "title": "Hướng dẫn Thực hành",
+            "prompt": f"Dựa trên tài liệu tham khảo, hãy biên soạn bài hướng dẫn thực hành từng bước (step-by-step practice) áp dụng kiến thức của mục: {section_title}."
         }
     ]
 
@@ -1607,25 +1639,49 @@ async def suggest_section_prompt_endpoint(
         }
 
     # 2. Call LLM to suggest highly detailed prompts for all types
+    is_programming = False
+    project_title = str(project.get("title") or "")
+    prog_keywords = ["lập trình", "python", "java", "c++", "cấu trúc dữ liệu", "giải thuật", "database", "sql", "code", "software", "phần mềm", "cntt", "cnpm"]
+    if any(kw in project_title.lower() for kw in prog_keywords):
+        is_programming = True
+
+    if is_programming:
+        exercise_rule = (
+            "- Nếu đề mục liên quan đến Thực hành hoặc Bài tập (ví dụ chứa từ khóa 'thực hành', 'bài tập', 'lab', 'thảo luận thực hành'), "
+            "prompt gợi ý cho mục 'Bài tập Củng cố' (exercise) và 'Ví dụ Minh họa' (example) BẮT BUỘC phải yêu cầu cấu trúc đầu ra gồm: "
+            "1. Câu hỏi, 2. Cách làm, 3. Kết quả mong đợi, 4. Mã nguồn Python (hoặc ngôn ngữ lập trình phù hợp) đặt trong khối code block markdown.\n"
+        )
+    else:
+        exercise_rule = (
+            "- Nếu đề mục liên quan đến Thực hành hoặc Bài tập (ví dụ chứa từ khóa 'thực hành', 'bài tập', 'lab', 'thảo luận thực hành'), "
+            "vì đây là học phần phi kỹ thuật/lập trình (HCI, Thiết kế, Quản lý...), prompt gợi ý BẮT BUỘC KHÔNG ĐƯỢC yêu cầu mã nguồn hay code Python. "
+            "Thay vào đó, phải yêu cầu cấu trúc đầu ra gồm: 1. Nhiệm vụ/Yêu cầu thực hành thực tế, 2. Các bước thực hiện chi tiết (ví dụ: phân tích khảo sát, điền bảng dữ liệu, phác thảo...), "
+            "3. Sản phẩm/Kết quả mong đợi (ví dụ: wireframe, persona, danh sách, sơ đồ tương tác...).\n"
+        )
+
     suggest_prompt_system = (
         "Bạn là chuyên gia thiết kế học liệu và Prompt Engineering cho hệ thống hỗ trợ tạo tài liệu giảng dạy dựa trên Retrieval-Augmented Generation (RAG).\n"
         "Nhiệm vụ của bạn là tự động tạo các prompt chất lượng cao nhằm hỗ trợ giảng viên khai thác hiệu quả mô hình ngôn ngữ lớn.\n\n"
         "## Ngữ cảnh đầu vào\n"
-        f"- Tên học phần: {project.get('title')}\n"
+        f"- Tên học phần: {project_title}\n"
         f"- Đề mục/Chương hiện tại: {section_title}\n"
         "- Các đoạn tri thức được truy xuất từ RAG (đã được trích xuất trong phần Context)\n\n"
         "## Mục tiêu\n"
         "KHÔNG sinh nội dung bài giảng. CHỈ sinh các prompt gợi ý để giảng viên có thể sử dụng hoặc chỉnh sửa trước khi gửi tới hệ thống AI.\n\n"
         "## Quy tắc xây dựng prompt & Tận dụng thế mạnh tài liệu\n"
-        "- Prompt phải bám sát chương mục hiện tại.\n"
-        "- Nếu đề mục liên quan đến Thực hành hoặc Bài tập (ví dụ chứa từ khóa 'thực hành', 'bài tập', 'lab', 'thảo luận thực hành'), prompt gợi ý cho mục 'Bài tập Củng cố' (exercise) và 'Ví dụ Minh họa' (example) BẮT BUỘC phải yêu cầu cấu trúc đầu ra gồm: 1. Câu hỏi, 2. Cách làm, 3. Kết quả mong đợi, 4. Mã nguồn Python đặt trong khối code block markdown.\n"
+        "- Prompt phải bám sát chương mục hiện tại và ngữ cảnh học phần.\n"
+        "- Tuyệt đối KHÔNG sử dụng các nhãn kỹ thuật nội bộ như 'Context 1', 'Context 2', 'đoạn ngữ cảnh' hoặc '[CONTEXT 1]' bên trong nội dung prompt gợi ý. Hãy thay thế bằng các cụm từ tự nhiên như 'tài liệu nguồn', 'tài liệu tham khảo', hoặc trực tiếp nhắc đến tên sách/tài liệu nếu có.\n"
+        "- Yêu cầu tính chính xác RAG: Tất cả các prompt gợi ý phải hướng dẫn AI sử dụng đúng các thông tin và tri thức cụ thể trong đoạn Context được trích xuất. Prompt gợi ý nên liệt kê rõ các khái niệm/ý chính cụ thể được tìm thấy trong Context để AI tập trung viết sâu vào các ý đó (ví dụ: 'yêu cầu giải thích khái niệm A, B và nêu ví dụ C...'), tránh tạo ra các prompt chung chung chung cho mọi bài học.\n"
+        f"{exercise_rule}"
         "- Nếu nhắc tới việc chèn ảnh hoặc sơ đồ minh họa, prompt gợi ý BẮT BUỘC phải yêu cầu AI chèn thẻ ảnh theo đúng cú pháp Markdown: `![Tên ảnh/sơ đồ](<placeholder: Mô tả chi tiết hình vẽ bằng tiếng Việt | Detailed English prompt for AI image generator>)`. KHÔNG ĐƯỢC sử dụng các cú pháp tự chế như `[IMAGE_PLACEHOLDER:...]` hay bất cứ định dạng nào khác. Bắt buộc phải có chữ 'placeholder:' ở đầu và dấu '|' ở giữa, tuyệt đối không được viết tắt thành `<[Minimalist...]>` hoặc bỏ đi từ khóa 'placeholder:'. Yêu cầu AI viết phần tiếng Anh vẽ ảnh bắt đầu bằng từ khóa phong cách: 'Minimalist 2D vector art, clean design, scientific style, white background, no text clutter, ...'. Lưu ý đặc biệt: Yêu cầu AI tuyệt đối KHÔNG viết dấu ngoặc đơn `(` hoặc `)` bên trong phần mô tả ảnh placeholder (thay vào đó dùng ngoặc vuông `[` và `]`), và KHÔNG dùng dấu `<` hoặc `>` bên trong phần mô tả để tránh làm hỏng cú pháp phân tích liên kết của hệ thống.\n"
-        "- Chủ động đề xuất chèn ảnh/sơ đồ: Đối với các đề mục chứa nội dung cần trực quan hóa (như quy trình làm việc, kiến trúc hệ thống, sơ đồ khối phân loại, đồ thị phân phối thống kê hoặc biểu đồ phân tích tương quan), prompt gợi ý phải yêu cầu AI chèn thẻ ảnh placeholder đúng cú pháp tại vị trí phù hợp. Lưu ý: Nghiêm cấm chèn dấu gạch chéo ngược escape `\\` hoặc `\\_` trong phần mô tả ảnh.\n"
-        "- Sử dụng thế mạnh tài liệu:\n"
-        "  + Với tài liệu 'Wes McKinney - Python for Data Analysis': ưu tiên các prompt hướng dẫn sử dụng thư viện pandas, numpy để chuẩn bị, xử lý và phân tích dữ liệu chuỗi thời gian.\n"
-        "  + Với tài liệu 'José Unpingco - Python for Probability...': ưu tiên các prompt tích hợp công thức toán học thống kê và kiểm định, hồi quy bằng thư viện scipy.stats hoặc statsmodels.\n"
-        "  + Với tài liệu 'Statistics-from-A-to-Z': ưu tiên các prompt giải thích trực quan, trực diện các khái niệm dễ gây nhầm lẫn (như p-value, standard error, ANOVA, sai lầm loại I/II) mà không lạm dụng toán phức tạp.\n"
-        "  + Nếu tài liệu tiếng Việt có chất lượng OCR kém hoặc ít chữ, hãy thiết kế prompt hướng dẫn AI sử dụng các tài liệu tiếng Anh để sinh nội dung chuyên môn chất lượng nhưng trình bày bằng tiếng Việt học thuật chuẩn theo đề cương.\n"
+        "- Chủ động đề xuất chèn ảnh/sơ đồ: Chỉ yêu cầu chèn ảnh đối với các đề mục thực sự cần minh họa trực quan (như quy trình làm việc, kiến trúc hệ thống, sơ đồ khối phân loại, wireframe giao diện, biểu đồ phân tích). Nếu là phần lý thuyết thuần túy định nghĩa ngắn gọn hoặc thảo luận thông thường, KHÔNG bắt buộc chèn ảnh placeholder.\n"
+        "- Thiết kế linh hoạt theo đặc thù môn học thuộc ngành CNTT (Trường Đại học Trà Vinh):\n"
+        "  + Phân tích kỹ tiêu đề môn học (Tên học phần) và ngữ cảnh đề mục để nhận diện nhóm kiến thức (ví dụ: Lập trình Web, Cơ sở dữ liệu, Mạng máy tính, An toàn thông tin, Tương tác người - máy HCI, Công nghệ phần mềm, Trí tuệ nhân tạo, v.v.).\n"
+        "  + Nếu là môn Lập trình/Thực hành kỹ thuật (ví dụ: Lập trình Web, Di động, OOP, Cấu trúc dữ liệu...): Các prompt phải chỉ dẫn AI viết code mẫu chuẩn, giải thích thuật toán, phân tích cú pháp, hướng dẫn debug, kiểm thử.\n"
+        "  + Nếu là môn Thiết kế/Quy trình/Phân tích (ví dụ: Tương tác người máy HCI, Phân tích thiết kế hệ thống, Quản lý dự án phần mềm...): Các prompt phải chỉ dẫn AI tập trung vào sơ đồ quy trình, tài liệu đặc tả (SRS), kịch bản người dùng (use cases), thiết kế giao diện (wireframe/mockup), nguyên lý thiết kế tương tác.\n"
+        "  + Nếu là môn Mạng máy tính/Hệ điều hành/Phần cứng: Các prompt phải chỉ dẫn AI giải thích cấu trúc mạng, cấu hình thiết bị, lệnh dòng lệnh (CLI), sơ đồ topology mạng, hoặc kiến trúc bộ nhớ/tiến trình.\n"
+        "  + Nếu là môn Toán tin/Thống kê/AI/Machine Learning: Các prompt phải ưu tiên tích hợp công thức toán học thống kê, thuật toán học máy, thư viện phân tích (như scipy, numpy, pandas) và diễn giải kết quả trực quan.\n"
+        "  + Nếu tài liệu tiếng Việt có chất lượng OCR kém hoặc ít chữ, hãy thiết kế prompt hướng dẫn AI sử dụng các tài liệu tiếng Anh để sinh nội dung chuyên môn chất lượng nhưng trình bày bằng tiếng Việt học thuật chuẩn theo đề cương giảng dạy CNTT tại Đại học Trà Vinh.\n"
         "- Sử dụng các thuật ngữ chuyên ngành được phát hiện từ tài liệu, chỉ sử dụng những thuật ngữ thực sự liên quan.\n"
         "- Prompt phải có mục tiêu rõ ràng và đủ chi tiết để tạo ra kết quả chất lượng cao.\n"
         "- Không tạo prompt chung chung. Không sử dụng mẫu cố định cho mọi chương.\n\n"
@@ -1661,9 +1717,9 @@ async def suggest_section_prompt_endpoint(
         "      \"prompt\": \"Prompt chi tiết giúp sinh case study thực tiễn áp dụng lý thuyết\"\n"
         "    },\n"
         "    {\n"
-        "      \"type\": \"quiz\",\n"
-        "      \"title\": \"Sinh Câu hỏi Trắc nghiệm\",\n"
-        "      \"prompt\": \"Prompt chi tiết giúp sinh các câu hỏi trắc nghiệm kiểm tra kiến thức\"\n"
+        "      \"type\": \"practice\",\n"
+        "      \"title\": \"Hướng dẫn Thực hành\",\n"
+        "      \"prompt\": \"Prompt chi tiết giúp sinh bài hướng dẫn thực hành từng bước áp dụng kiến thức thực tế của bài học và các sản phẩm cần nộp\"\n"
         "    }\n"
         "  ]\n"
         "}"

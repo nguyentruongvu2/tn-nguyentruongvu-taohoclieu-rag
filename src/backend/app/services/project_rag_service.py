@@ -184,6 +184,7 @@ class UpdateSectionRequest(BaseModel):
     content: str | None = None
     prompt: str | None = None
     order: int | None = None
+    level: int | None = None
 
 
 class CreateSectionRequest(BaseModel):
@@ -191,6 +192,7 @@ class CreateSectionRequest(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     prompt: str = ""
     order: int | None = None
+    level: int | None = None
 
 
 class GenerateProjectOutlineRequest(BaseModel):
@@ -3664,6 +3666,21 @@ def _enforce_hard_section_format(
 
 
 def _parse_outline_to_sections(outline_markdown: str) -> list[dict[str, Any]]:
+    markdown_content = (outline_markdown or "").strip()
+    if markdown_content.startswith("{") and markdown_content.endswith("}"):
+        try:
+            import json
+            parsed = json.loads(markdown_content)
+            if isinstance(parsed, dict):
+                if "content" in parsed:
+                    markdown_content = parsed["content"]
+                elif "outline" in parsed:
+                    markdown_content = parsed["outline"]
+                elif "markdown" in parsed:
+                    markdown_content = parsed["markdown"]
+        except Exception:
+            pass
+
     def _clean_outline_title(text: str) -> str:
         cleaned = (text or "").strip()
         # Only strip leading markdown list markers like -, *, +, but keep numbers and "Chương/Mục" prefixes
@@ -3671,7 +3688,7 @@ def _parse_outline_to_sections(outline_markdown: str) -> list[dict[str, Any]]:
         return cleaned.strip()
 
     sections: list[dict[str, Any]] = []
-    raw_lines = (outline_markdown or "").splitlines()
+    raw_lines = markdown_content.splitlines()
 
     for raw in raw_lines:
         line = raw.rstrip()

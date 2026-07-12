@@ -41,6 +41,7 @@ def _ensure_project_editor_columns(conn) -> None:
     section_migrations = [
         ("retrieved_chunks_json", "ALTER TABLE project_editor_sections ADD COLUMN retrieved_chunks_json JSONB NOT NULL DEFAULT '[]'"),
         ("evaluation_json",       "ALTER TABLE project_editor_sections ADD COLUMN evaluation_json JSONB"),
+        ("level",                 "ALTER TABLE project_editor_sections ADD COLUMN level INTEGER NOT NULL DEFAULT 1"),
     ]
     for column, statement in section_migrations:
         if not _column_exists(conn, "project_editor_sections", column):
@@ -363,6 +364,7 @@ def init_auth_db() -> None:
                 prompt              TEXT NOT NULL DEFAULT '',
                 retrieved_chunks_json JSONB NOT NULL DEFAULT '[]',
                 evaluation_json     JSONB,
+                level               INTEGER NOT NULL DEFAULT 1,
                 order_index         INTEGER NOT NULL DEFAULT 0,
                 updated_at          TIMESTAMPTZ NOT NULL,
                 FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
