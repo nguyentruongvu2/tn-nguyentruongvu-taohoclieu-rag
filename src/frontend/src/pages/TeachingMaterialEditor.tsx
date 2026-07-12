@@ -38,6 +38,7 @@ import {
   restoreSectionHistory,
   getEditorSection,
   getSuggestedPrompt,
+  editSelection,
   type EditorProjectExportFormat,
   type EditorSection,
 } from "../services/api";
@@ -719,6 +720,17 @@ export default function TeachingMaterialEditor() {
   const [error, setError] = useState("");
   const [projectTitle, setProjectTitle] = useState("Dự án bài giảng");
 
+  // AI Selection Edit
+  const [selectedText, setSelectedText] = useState<string>("");
+  const [selectionRange, setSelectionRange] = useState<{ x: number; y: number } | null>(null);
+  const [selectionPrompt, setSelectionPrompt] = useState<string>("");
+  const [isEditingSelection, setIsEditingSelection] = useState<boolean>(false);
+  const [selectionDiff, setSelectionDiff] = useState<{
+    originalText: string;
+    refinedText: string;
+    sectionId: string;
+  } | null>(null);
+
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     return (localStorage.getItem("theme") as "light" | "dark") || "light";
   });
@@ -961,32 +973,34 @@ export default function TeachingMaterialEditor() {
       normalizedContent,
       activeCitationGroups,
     );
-    if (!canShowPreviewCitation || !showCitationsInPreview) return baseContent;
 
-    // For Quiz, the backend already handles per-question citations.
-    if (isQuizPreviewSection) {
-      return baseContent;
+    let finalContent = baseContent;
+
+    if (canShowPreviewCitation && showCitationsInPreview) {
+      if (!isQuizPreviewSection && !isMainContentPreviewSection && !baseContent.includes("📚 Nguồn:")) {
+        const citationBlock = buildCitationBlockMarkdown(activeCitationGroups);
+        if (citationBlock) {
+          finalContent = baseContent ? `${baseContent}\n\n${citationBlock}` : citationBlock;
+        }
+      }
     }
 
-    // For Main Content, the backend now handles per-subsection citations.
-    if (isMainContentPreviewSection) {
-      return baseContent;
+    // Apply active selection diff preview styling if present
+    if (selectionDiff && activeSection && selectionDiff.sectionId === activeSection.id) {
+      const diffMarkdown = `~~${selectionDiff.originalText}~~ [${selectionDiff.refinedText}](#diff-add)`;
+      finalContent = finalContent.replace(selectionDiff.originalText, diffMarkdown);
     }
 
-    // For other sections, append a global citation block if not already present.
-    // Note: Backend now adds this to the content, so this is mostly a safety fallback.
-    if (baseContent.includes("📚 Nguồn:")) return baseContent;
-
-    const citationBlock = buildCitationBlockMarkdown(activeCitationGroups);
-    if (!citationBlock) return baseContent;
-    return baseContent ? `${baseContent}\n\n${citationBlock}` : citationBlock;
+    return finalContent;
   }, [
+    activeSection,
     activeSectionContent,
     activeCitationGroups,
     canShowPreviewCitation,
     isMainContentPreviewSection,
     isQuizPreviewSection,
     showCitationsInPreview,
+    selectionDiff,
   ]);
   const orderedSections = useMemo(
     () => sections.slice().sort((a, b) => a.order - b.order),
@@ -1369,6 +1383,97 @@ export default function TeachingMaterialEditor() {
     
     return `${newPrefix} ${childTitleClean}`;
   }, [getChildrenSections]);
+
+  const handlePreviewMouseUp = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (isEditingSelection) return;
+
+    const selection = window.getSelection();
+    if (!selection) return;
+
+    const text = selection.toString().trim();
+    const clickedElement = e.target as HTMLElement;
+
+    // Prevent clearing or recalculating selection if clicking within the selection popup itself
+    if (clickedElement.closest(".ai-selection-popup")) {
+      return;
+    }
+
+    if (!text) {
+      setSelectedText("");
+      setSelectionRange(null);
+      return;
+    }
+
+    try {
+      const range = selection.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
+      const containerRect = e.currentTarget.getBoundingClientRect();
+      const x = rect.left - containerRect.left + rect.width / 2;
+      const y = rect.top - containerRect.top + e.currentTarget.scrollTop;
+
+      setSelectedText(text);
+      setSelectionRange({ x, y });
+    } catch (err) {
+      console.error("Failed to calculate selection position", err);
+    }
+  };
+
+  const handleApplySelectionEdit = async () => {
+    if (!projectId || !activeSectionId || !selectedText.trim() || !selectionPrompt.trim()) return;
+    setIsEditingSelection(true);
+    try {
+      const res = await editSelection({
+        project_id: projectId,
+        section_id: activeSectionId,
+        selected_text: selectedText,
+        prompt: selectionPrompt,
+      });
+
+      if (res.success) {
+        toastService.success("AI đã đề xuất bản sửa đổi!");
+        setSelectionDiff({
+          originalText: selectedText,
+          refinedText: res.content,
+          sectionId: activeSectionId,
+        });
+        setSelectionPrompt("");
+      } else {
+        toastService.error("Không thể xử lý yêu cầu sửa đoạn bôi đen.");
+      }
+    } catch (err) {
+      toastService.error(
+        err instanceof Error ? err.message : "Đã xảy ra lỗi khi gọi AI sửa đoạn bôi đen."
+      );
+    } finally {
+      setIsEditingSelection(false);
+    }
+  };
+
+  const handleAcceptSelectionDiff = () => {
+    if (!selectionDiff || !activeSectionId) return;
+
+    const activeSec = sections.find((s) => s.id === activeSectionId);
+    if (!activeSec) return;
+
+    const newContent = activeSec.content.replace(
+      selectionDiff.originalText,
+      selectionDiff.refinedText
+    );
+
+    updateSection(activeSectionId, { content: newContent });
+    toastService.success("Đã áp dụng các thay đổi từ AI!");
+
+    setSelectionDiff(null);
+    setSelectedText("");
+    setSelectionRange(null);
+  };
+
+  const handleRejectSelectionDiff = () => {
+    setSelectionDiff(null);
+    setSelectedText("");
+    setSelectionRange(null);
+    toastService.info("Đã hủy bỏ đề xuất chỉnh sửa từ AI.");
+  };
 
   const handleNestSection = async (sourceId: string, targetId: string) => {
     await flushPendingSavesAndWait();
@@ -3240,12 +3345,118 @@ export default function TeachingMaterialEditor() {
                         <span>{showCitationsInPreview ? "Hiện nguồn" : "Ẩn nguồn"}</span>
                       </button>
                     </div>
-                    <div className="flex-1 p-6 overflow-y-auto prose dark:prose-invert markdown-preview max-w-none text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-950 custom-scrollbar">
+                    <div 
+                      onMouseUp={handlePreviewMouseUp}
+                      className="flex-1 p-6 overflow-y-auto prose dark:prose-invert markdown-preview max-w-none text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-950 custom-scrollbar relative"
+                    >
+                      {/* Selection Popup */}
+                      {selectedText && selectionRange && (
+                        <div 
+                          className="absolute bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl rounded-xl p-3.5 z-50 ai-selection-popup flex flex-col gap-2.5 w-72 animate-in fade-in zoom-in-95 duration-150 text-left normal-case font-normal"
+                          style={{
+                            left: `${Math.max(10, Math.min(selectionRange.x - 144, 400))}px`,
+                            top: `${Math.max(10, selectionRange.y - 140)}px`,
+                          }}
+                          onMouseUp={(e) => e.stopPropagation()}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {selectionDiff ? (
+                            <>
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider flex items-center gap-1">
+                                  <Sparkles size={10} className="text-amber-500 animate-pulse" />
+                                  AI đề xuất thay đổi
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                                Hãy xem trước phần bị gạch đỏ (xóa) và tô xanh (thêm mới) trong Bản xem trước.
+                              </p>
+                              <div className="flex items-center gap-2 mt-1">
+                                <button
+                                  onClick={handleAcceptSelectionDiff}
+                                  className="flex-1 text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white py-1.5 px-3 rounded-lg flex items-center justify-center gap-1 shadow-sm transition duration-150 active:scale-95"
+                                >
+                                  <CheckCircle2 size={12} />
+                                  <span>Chấp nhận</span>
+                                </button>
+                                <button
+                                  onClick={handleRejectSelectionDiff}
+                                  className="flex-1 text-[11px] font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 py-1.5 px-3 rounded-lg flex items-center justify-center gap-1 transition duration-150 active:scale-95"
+                                >
+                                  <span>Hủy bỏ</span>
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
+                                  AI Sửa đoạn bôi đen
+                                </span>
+                                <button 
+                                  onClick={() => {
+                                    setSelectedText("");
+                                    setSelectionRange(null);
+                                    setSelectionDiff(null);
+                                  }}
+                                  className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs font-semibold"
+                                >
+                                  Đóng
+                                </button>
+                              </div>
+                              <p className="text-[11px] text-slate-500 dark:text-slate-400 italic truncate max-w-full">
+                                "{selectedText}"
+                              </p>
+                              <div className="flex items-center gap-1.5 mt-1">
+                                <input 
+                                  type="text"
+                                  placeholder="Yêu cầu sửa (VD: viết lại ngắn gọn)..."
+                                  value={selectionPrompt}
+                                  onChange={(e) => setSelectionPrompt(e.target.value)}
+                                  className="flex-1 text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 focus:bg-white transition-all duration-150"
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" && selectionPrompt.trim() && !isEditingSelection) {
+                                      void handleApplySelectionEdit();
+                                    }
+                                  }}
+                                />
+                                <button
+                                  disabled={isEditingSelection || !selectionPrompt.trim()}
+                                  onClick={() => void handleApplySelectionEdit()}
+                                  className={`p-1.5 rounded-lg text-white transition-all duration-150 ${
+                                    isEditingSelection || !selectionPrompt.trim()
+                                      ? "bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed"
+                                      : "bg-blue-600 hover:bg-blue-700 active:scale-95"
+                                  }`}
+                                >
+                                  {isEditingSelection ? (
+                                    <Loader2 size={12} className="animate-spin" />
+                                  ) : (
+                                    <Zap size={12} />
+                                  )}
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
                       {activeSection.content ? (
                         <EnhancedMarkdownRenderer
                           content={previewContent}
                           components={{
+                            del: ({ children }) => (
+                              <del className="bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400 line-through px-1 rounded mx-0.5 border border-red-200/20 font-medium">
+                                {children}
+                              </del>
+                            ),
                             a: ({ href, children }) => {
+                              if (href === "#diff-add") {
+                                return (
+                                  <ins className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400 no-underline px-1.5 py-0.5 rounded mx-0.5 border border-emerald-200/30 font-semibold inline-block">
+                                    {children}
+                                  </ins>
+                                );
+                              }
                               const sourceId = parseCitationSourceId(href);
                               if (sourceId) {
                                 return (
