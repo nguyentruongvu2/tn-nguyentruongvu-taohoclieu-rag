@@ -118,8 +118,6 @@ uploads/scratch/
 uploads/
 
 # Ignore document models/templates/outputs
-*.docx
-*.pdf
 *.pptx
 *.xlsx
 
